@@ -415,6 +415,29 @@ class ProxmoxDatacenterManagerAPI:
         except ProxmoxDatacenterManagerError:
             return []
 
+    async def find_node_remote(self, node_name: str) -> str | None:
+        """Find which remote a node belongs to.
+
+        Args:
+            node_name: The name of the node to find
+
+        Returns:
+            The remote name if found, None otherwise
+        """
+        nodes = await self.get_all_nodes()
+        for node in nodes:
+            name = node.get("node", node.get("name", ""))
+            if name.lower() == node_name.lower():
+                remote = node.get("remote")
+                _LOGGER.debug("Found node '%s' in remote '%s'", node_name, remote)
+                return remote
+        _LOGGER.warning(
+            "Node '%s' not found. Available nodes: %s",
+            node_name,
+            [f"{n.get('node', n.get('name'))}@{n.get('remote')}" for n in nodes]
+        )
+        return None
+
     async def debug_api_structure(self) -> dict[str, Any]:
         """Debug helper to inspect API structure."""
         debug_info: dict[str, Any] = {}
@@ -503,8 +526,16 @@ class ProxmoxDatacenterManagerAPI:
     ) -> str:
         """Migrate a VM between different clusters (remote migration).
 
-        Note: For remote migration, target_node is included in target-endpoint
-        if needed. The 'target' parameter is the remote name.
+        Args:
+            source_remote: The source remote/cluster name
+            vmid: The VM ID
+            target_remote: The destination remote/cluster name
+            target_node: The destination node within the target remote
+            vm_type: The VM type (pve-qemu or pve-lxc)
+            online: Perform live migration if VM is running
+            delete_source: Delete VM from source after migration
+            storage_map: Storage name mappings (source:target)
+            bridge_map: Bridge name mappings (source:target)
         """
         # Strip 'pve-' prefix for API endpoint
         api_vm_type = _strip_pve_prefix(vm_type)
@@ -529,12 +560,17 @@ class ProxmoxDatacenterManagerAPI:
 
         data: dict[str, Any] = {
             "target": target_remote,
+            "target-node": target_node,
             "target-storage": storage_mappings,
             "target-bridge": bridge_mappings,
             "delete": delete_source,
             "online": online,
         }
 
+        _LOGGER.info(
+            "migrate_vm_remote: VM %d from %s to %s/%s",
+            vmid, source_remote, target_remote, target_node
+        )
         _LOGGER.debug("migrate_vm_remote: endpoint=%s, data=%s", endpoint, data)
         result = await self._request("POST", endpoint, data=data)
         return result.get("data", result) if isinstance(result, dict) else result

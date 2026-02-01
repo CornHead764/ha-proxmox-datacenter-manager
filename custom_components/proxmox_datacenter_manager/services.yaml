@@ -18,7 +18,7 @@ migrate_vm:
         text: {}
     target_remote:
       name: Target Remote
-      description: The target remote/cluster (for cross-cluster migrations). Leave empty for same-cluster migrations.
+      description: The target remote/cluster. Leave empty to auto-detect from target host - the system will find which remote the target host belongs to and automatically use cross-cluster migration if needed.
       required: false
       example: "datacenter2"
       selector:

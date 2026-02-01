@@ -182,7 +182,12 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
         storage_map: dict[str, str] | None = None,
         bridge_map: dict[str, str] | None = None,
     ) -> MigrationTask:
-        """Migrate a VM to a target host."""
+        """Migrate a VM to a target host.
+
+        If target_remote is not specified, auto-detects which remote the
+        target_host belongs to. This allows users to just specify a node
+        name and have the system figure out if it's local or cross-cluster.
+        """
         async with self._migration_lock:
             # Update state to searching
             self._data.migration_state = MIGRATION_STATE_SEARCHING
@@ -197,13 +202,30 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
                 self.async_set_updated_data(self._data)
                 raise ValueError(f"VM '{vm_name}' not found")
 
+            # Auto-detect target remote from target host if not specified
+            if target_remote is None:
+                detected_remote = await self.api.find_node_remote(target_host)
+                if detected_remote:
+                    target_remote = detected_remote
+                    _LOGGER.info(
+                        "Auto-detected target remote '%s' for node '%s'",
+                        target_remote, target_host
+                    )
+                else:
+                    # Node not found, assume it's in the same remote as the VM
+                    _LOGGER.warning(
+                        "Could not find target node '%s' in any remote, "
+                        "assuming same remote as VM (%s)",
+                        target_host, vm.remote
+                    )
+
             # Determine if this is a local or remote migration
             is_remote_migration = target_remote is not None and target_remote != vm.remote
 
             _LOGGER.info(
-                "Migrating VM %s (id=%d) from %s/%s to %s%s, is_remote=%s",
-                vm.name, vm.vmid, vm.remote, vm.node, target_host,
-                f" on {target_remote}" if target_remote else "",
+                "Migrating VM %s (id=%d) from %s/%s to %s/%s, is_remote=%s",
+                vm.name, vm.vmid, vm.remote, vm.node,
+                target_remote or vm.remote, target_host,
                 is_remote_migration
             )
 
