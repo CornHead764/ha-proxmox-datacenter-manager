@@ -40,6 +40,8 @@ ATTR_TARGET_HOST = "target_host"
 ATTR_TARGET_REMOTE = "target_remote"
 ATTR_ONLINE = "online"
 ATTR_WITH_LOCAL_DISKS = "with_local_disks"
+ATTR_STORAGE_MAP = "storage_map"
+ATTR_BRIDGE_MAP = "bridge_map"
 
 # Update intervals
 SCAN_INTERVAL_SECONDS = 30
