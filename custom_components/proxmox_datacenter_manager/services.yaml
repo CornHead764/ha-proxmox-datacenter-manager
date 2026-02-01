@@ -11,14 +11,14 @@ migrate_vm:
         text: {}
     target_host:
       name: Target Host
-      description: The target node/host to migrate the VM to
+      description: The target node/host to migrate the VM to. For local (same-cluster) migrations, the VM will land on this specific node. For cross-cluster migrations, PDM auto-selects the node (this field is used only for remote detection).
       required: true
       example: "pve-node2"
       selector:
         text: {}
     target_remote:
       name: Target Remote
-      description: The target remote/cluster. Leave empty to auto-detect from target host - the system will find which remote the target host belongs to and automatically use cross-cluster migration if needed.
+      description: The target remote/cluster. Leave empty to auto-detect from target host. Note: For cross-cluster migrations, PDM auto-selects the destination node within the target cluster.
       required: false
       example: "datacenter2"
       selector:
