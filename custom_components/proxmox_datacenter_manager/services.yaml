@@ -1,0 +1,79 @@
+migrate_vm:
+  name: Migrate VM
+  description: Migrate a virtual machine to a target host
+  fields:
+    vm_name:
+      name: VM Name
+      description: The name of the virtual machine to migrate
+      required: true
+      example: "my-vm"
+      selector:
+        text:
+    target_host:
+      name: Target Host
+      description: The target node/host to migrate the VM to
+      required: true
+      example: "pve-node2"
+      selector:
+        text:
+    target_remote:
+      name: Target Remote
+      description: The target remote/cluster (for cross-cluster migrations). Leave empty for same-cluster migrations.
+      required: false
+      example: "datacenter2"
+      selector:
+        text:
+    online:
+      name: Online Migration
+      description: Perform live migration (VM stays running)
+      required: false
+      default: true
+      selector:
+        boolean:
+    with_local_disks:
+      name: With Local Disks
+      description: Include local disks in the migration (for local migrations only)
+      required: false
+      default: false
+      selector:
+        boolean:
+
+start_vm:
+  name: Start VM
+  description: Start a virtual machine by name
+  fields:
+    vm_name:
+      name: VM Name
+      description: The name of the virtual machine to start
+      required: true
+      example: "my-vm"
+      selector:
+        text:
+
+stop_vm:
+  name: Stop VM
+  description: Stop a virtual machine by name
+  fields:
+    vm_name:
+      name: VM Name
+      description: The name of the virtual machine to stop
+      required: true
+      example: "my-vm"
+      selector:
+        text:
+
+shutdown_vm:
+  name: Shutdown VM
+  description: Gracefully shutdown a virtual machine by name
+  fields:
+    vm_name:
+      name: VM Name
+      description: The name of the virtual machine to shutdown
+      required: true
+      example: "my-vm"
+      selector:
+        text:
+
+reset_migration_state:
+  name: Reset Migration State
+  description: Reset the migration state sensor to idle

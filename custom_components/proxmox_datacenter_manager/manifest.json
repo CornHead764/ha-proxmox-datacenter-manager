@@ -1,0 +1,12 @@
+{
+  "domain": "proxmox_datacenter_manager",
+  "name": "Proxmox Datacenter Manager",
+  "codeowners": ["@CornHead764"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/CornHead764/ha-proxmox-datacenter-manager",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/CornHead764/ha-proxmox-datacenter-manager/issues",
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "1.0.0"
+}

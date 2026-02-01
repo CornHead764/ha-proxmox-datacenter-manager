@@ -1,0 +1,119 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Proxmox Datacenter Manager",
+        "description": "Connect to your Proxmox Datacenter Manager instance.\n\nAPI Token ID format: {api_token_format}",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "api_token_id": "API Token ID",
+          "api_token_secret": "API Token Secret",
+          "verify_ssl": "Verify SSL Certificate"
+        },
+        "data_description": {
+          "host": "Hostname or IP address of your PDM server",
+          "port": "Port number (default: 8443)",
+          "api_token_id": "API token ID (e.g., user@realm!tokenname)",
+          "api_token_secret": "The secret value of your API token",
+          "verify_ssl": "Enable to verify the SSL certificate"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Please enter your new API token credentials.",
+        "data": {
+          "api_token_id": "API Token ID",
+          "api_token_secret": "API Token Secret"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to PDM server",
+      "invalid_auth": "Invalid API token credentials",
+      "unknown": "An unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This PDM instance is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "migration_state": {
+        "name": "Migration State"
+      },
+      "vm_count": {
+        "name": "Total VMs"
+      },
+      "node_count": {
+        "name": "Total Nodes"
+      },
+      "remote_count": {
+        "name": "Total Remotes"
+      }
+    }
+  },
+  "services": {
+    "migrate_vm": {
+      "name": "Migrate VM",
+      "description": "Migrate a virtual machine to a target host",
+      "fields": {
+        "vm_name": {
+          "name": "VM Name",
+          "description": "The name of the virtual machine to migrate"
+        },
+        "target_host": {
+          "name": "Target Host",
+          "description": "The target node/host to migrate the VM to"
+        },
+        "target_remote": {
+          "name": "Target Remote",
+          "description": "The target remote/cluster for cross-cluster migrations (leave empty for same-cluster)"
+        },
+        "online": {
+          "name": "Online Migration",
+          "description": "Perform live migration (VM stays running)"
+        },
+        "with_local_disks": {
+          "name": "With Local Disks",
+          "description": "Include local disks in the migration"
+        }
+      }
+    },
+    "start_vm": {
+      "name": "Start VM",
+      "description": "Start a virtual machine by name",
+      "fields": {
+        "vm_name": {
+          "name": "VM Name",
+          "description": "The name of the virtual machine to start"
+        }
+      }
+    },
+    "stop_vm": {
+      "name": "Stop VM",
+      "description": "Stop a virtual machine by name",
+      "fields": {
+        "vm_name": {
+          "name": "VM Name",
+          "description": "The name of the virtual machine to stop"
+        }
+      }
+    },
+    "shutdown_vm": {
+      "name": "Shutdown VM",
+      "description": "Gracefully shutdown a virtual machine by name",
+      "fields": {
+        "vm_name": {
+          "name": "VM Name",
+          "description": "The name of the virtual machine to shutdown"
+        }
+      }
+    },
+    "reset_migration_state": {
+      "name": "Reset Migration State",
+      "description": "Reset the migration state sensor to idle"
+    }
+  }
+}
