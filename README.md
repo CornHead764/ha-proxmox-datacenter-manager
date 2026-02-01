@@ -41,12 +41,62 @@ A Home Assistant custom integration for [Proxmox Datacenter Manager (PDM)](https
 ### Creating an API Token in PDM
 
 1. Log into your PDM web interface
-2. Navigate to Configuration → Access Control → API Tokens
-3. Create a new token with the following permissions:
-   - `Resource.Audit` - For viewing VMs and resources
-   - `Resource.Migrate` - For migrating VMs
-   - `Resource.Manage` - For power operations (start/stop/shutdown)
-4. Save the Token ID (format: `user@realm!tokenname`) and Secret
+2. Navigate to **Configuration → Access Control → API Tokens**
+3. Create a new token for a user (e.g., `root@pam!homeassistant`)
+4. Save the Token ID and Secret value securely
+
+### Required API Permissions
+
+PDM uses role-based access control. Here are the privileges needed for each feature:
+
+| Feature | Required Privilege | Path |
+|---------|-------------------|------|
+| **View resources/VMs** | `Resource.Audit` | `/` or `/resource/{remote}` |
+| **Start/Stop/Shutdown VMs** | `Resource.Manage` | `/resource/{remote}/guest/{vmid}` |
+| **Migrate VMs (local)** | `Resource.Migrate` | `/resource/{remote}/guest/{vmid}` |
+| **Migrate VMs (cross-cluster)** | `Resource.Migrate` | Both source and target paths |
+| **View system info** | `System.Audit` | `/` |
+
+#### Recommended Setup: Administrator Role
+
+For full functionality, assign the **Administrator** role at the root path `/`:
+
+```
+Path: /
+User: your-user@pam
+Role: Administrator
+Propagate: Yes
+```
+
+This grants all privileges and propagates them to all child paths.
+
+#### Minimal Permissions Setup
+
+If you prefer minimal permissions:
+
+1. **For read-only monitoring:**
+   - Role: `Auditor` on path `/`
+
+2. **For VM power control:**
+   - Privileges: `Resource.Audit`, `Resource.Manage` on path `/`
+
+3. **For VM migration:**
+   - Privileges: `Resource.Audit`, `Resource.Manage`, `Resource.Migrate` on path `/`
+
+### PDM Privilege Reference
+
+| Privilege | Description |
+|-----------|-------------|
+| `System.Audit` | View system status and configuration |
+| `System.Modify` | Modify system-level configuration |
+| `Resource.Audit` | View guests, storage, and other resources |
+| `Resource.Manage` | Start, stop, shutdown guests |
+| `Resource.Modify` | Change guest configuration |
+| `Resource.Migrate` | Migrate guests between nodes/clusters |
+| `Resource.Create` | Create new guests |
+| `Resource.Delete` | Delete guests |
+| `Access.Audit` | View permissions and users |
+| `Access.Modify` | Modify permissions and users |
 
 ### Adding to Home Assistant
 
@@ -131,6 +181,37 @@ Reset the migration state sensor to idle.
 service: proxmox_datacenter_manager.reset_migration_state
 ```
 
+### `proxmox_datacenter_manager.list_vms`
+
+List all discovered VMs and containers. Useful for debugging and verifying the integration can see your VMs.
+
+```yaml
+service: proxmox_datacenter_manager.list_vms
+response_variable: vms
+```
+
+Returns:
+```yaml
+success: true
+count: 5
+vms:
+  - name: "my-vm"
+    vmid: 100
+    node: "pve-node1"
+    remote: "datacenter1"
+    type: "qemu"
+    status: "running"
+```
+
+### `proxmox_datacenter_manager.debug_api`
+
+Inspect raw API responses from PDM. Use this to troubleshoot connection or data issues.
+
+```yaml
+service: proxmox_datacenter_manager.debug_api
+response_variable: debug_info
+```
+
 ## Sensors
 
 The integration creates the following sensors:
@@ -193,24 +274,84 @@ automation:
 
 ## Troubleshooting
 
+### Sensors show 0 for VMs/Nodes/Remotes
+
+This usually indicates the API is not returning data correctly. Debug steps:
+
+1. **Check API permissions**: Ensure your API token has `Resource.Audit` privilege on path `/`
+
+2. **Use the debug service** to inspect raw API responses:
+   ```yaml
+   service: proxmox_datacenter_manager.debug_api
+   response_variable: debug_info
+   ```
+   Check the response in Developer Tools → Services
+
+3. **Check Home Assistant logs** for debug output:
+   ```yaml
+   logger:
+     logs:
+       custom_components.proxmox_datacenter_manager: debug
+   ```
+
+4. **Verify remotes are configured** in PDM:
+   - Log into PDM web interface
+   - Check that PVE remotes are added under Configuration → Remotes
+   - Ensure remotes are connected and synced
+
+### VM not found error
+
+When `migrate_vm` or other services return "VM not found":
+
+1. **Use `list_vms` service** to see what VMs the integration can discover:
+   ```yaml
+   service: proxmox_datacenter_manager.list_vms
+   response_variable: vms
+   ```
+
+2. **Check VM name vs VMID**: You can search by either:
+   - VM name: `"my-vm"`
+   - VMID: `"100"`
+
+3. **Verify the VM exists** in PDM's web interface under Resources
+
+4. **Check resource caching**: PDM caches resource data. If a VM was just created, wait 30 seconds or restart the integration
+
 ### Cannot connect to PDM
 
-- Verify the host and port are correct
+- Verify the host and port are correct (default port: 8443)
 - Ensure the PDM server is accessible from your Home Assistant instance
 - Check firewall rules allow traffic on port 8443
+- For SSL issues, try disabling "Verify SSL" temporarily to test
 
 ### Invalid authentication
 
 - Verify the API Token ID format: `user@realm!tokenname`
-- Ensure the token secret is correct
+  - Example: `root@pam!homeassistant`
+- Ensure the token secret is the full secret value (usually a long UUID-like string)
 - Check the token has not expired
+- Verify the token's user has appropriate permissions
 
 ### Migration fails
 
-- Verify the target node has sufficient resources
+- Verify the target node has sufficient resources (CPU, RAM, storage)
 - Check network connectivity between nodes
 - Ensure shared storage is accessible from both nodes (for shared storage migrations)
-- For local disk migrations, enable "with_local_disks"
+- For local disk migrations, enable `with_local_disks: true`
+- Check PDM logs for detailed error messages: `journalctl -u proxmox-datacenter-manager`
+
+### Enabling Debug Logging
+
+Add this to your `configuration.yaml`:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.proxmox_datacenter_manager: debug
+```
+
+This will log all API requests and responses to help diagnose issues.
 
 ## Contributing
 

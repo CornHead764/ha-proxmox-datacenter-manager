@@ -4,17 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import aiohttp
 
 from .const import (
     RESOURCE_TYPE_LXC,
+    RESOURCE_TYPE_NODE,
     RESOURCE_TYPE_QEMU,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _strip_pve_prefix(vm_type: str) -> str:
+    """Strip the 'pve-' prefix from resource types for API calls.
+
+    PDM uses 'pve-qemu' and 'pve-lxc' in resource listings, but
+    the API endpoints use 'qemu' and 'lxc' in the URL path.
+    """
+    if vm_type.startswith("pve-"):
+        return vm_type[4:]
+    return vm_type
 
 
 @dataclass
@@ -118,11 +130,13 @@ class ProxmoxDatacenterManagerAPI:
         endpoint: str,
         params: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Make an API request."""
         session = await self._ensure_session()
         url = f"{self._base_url}{endpoint}"
         headers = self._get_auth_header()
+
+        _LOGGER.debug("PDM API request: %s %s params=%s", method, url, params)
 
         try:
             async with session.request(
@@ -133,20 +147,38 @@ class ProxmoxDatacenterManagerAPI:
                 json=data if method != "GET" else None,
                 ssl=self._verify_ssl if self._verify_ssl else False,
             ) as response:
+                response_text = await response.text()
+
+                _LOGGER.debug(
+                    "PDM API response: status=%s, body_preview=%s",
+                    response.status,
+                    response_text[:500] if len(response_text) > 500 else response_text
+                )
+
                 if response.status == 401:
                     raise AuthenticationError("Invalid API token")
                 if response.status == 403:
                     raise AuthenticationError("Access denied - check API token permissions")
                 if response.status >= 400:
-                    text = await response.text()
-                    raise APIError(f"API error {response.status}: {text}")
+                    raise APIError(f"API error {response.status}: {response_text}")
 
-                result = await response.json()
-                return result.get("data", result)
+                try:
+                    import json
+                    result = json.loads(response_text)
+                except Exception as parse_err:
+                    _LOGGER.error("Failed to parse JSON response: %s", parse_err)
+                    raise APIError(f"Invalid JSON response: {response_text[:200]}")
+
+                # Handle Proxmox API envelope - data is usually in "data" key
+                if isinstance(result, dict) and "data" in result:
+                    return result["data"]
+                return result
 
         except aiohttp.ClientConnectorError as err:
+            _LOGGER.error("Connection error to PDM: %s", err)
             raise ConnectionError(f"Failed to connect to PDM: {err}") from err
         except aiohttp.ClientError as err:
+            _LOGGER.error("API request failed: %s", err)
             raise APIError(f"API request failed: {err}") from err
 
     async def test_connection(self) -> bool:
@@ -174,7 +206,19 @@ class ProxmoxDatacenterManagerAPI:
         if search:
             params["search"] = search
 
-        return await self._request("GET", "/resources/list", params=params)
+        result = await self._request("GET", "/resources/list", params=params)
+        _LOGGER.debug("get_resources raw result type: %s", type(result))
+
+        # Ensure we return a list
+        if result is None:
+            return []
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            # Maybe the data is nested differently
+            _LOGGER.debug("get_resources got dict with keys: %s", result.keys())
+            return [result]
+        return []
 
     async def get_all_vms(self) -> list[VMInfo]:
         """Get all VMs and containers from all remotes."""
@@ -182,28 +226,77 @@ class ProxmoxDatacenterManagerAPI:
 
         try:
             resources = await self.get_resources()
+            _LOGGER.debug("get_all_vms: got %d remote resource entries", len(resources))
 
             for remote_data in resources:
-                remote_name = remote_data.get("remote", "unknown")
-                resource_list = remote_data.get("resources", [])
+                _LOGGER.debug("Processing remote_data: %s", type(remote_data))
+
+                if not isinstance(remote_data, dict):
+                    _LOGGER.warning("Unexpected remote_data type: %s", type(remote_data))
+                    continue
+
+                # Try different possible key names for remote
+                remote_name = (
+                    remote_data.get("remote") or
+                    remote_data.get("name") or
+                    remote_data.get("id") or
+                    "unknown"
+                )
+
+                # Try different possible key names for resources list
+                resource_list = (
+                    remote_data.get("resources") or
+                    remote_data.get("data") or
+                    []
+                )
+
+                # If the remote_data itself looks like a resource, handle it
+                if "type" in remote_data and "vmid" in remote_data:
+                    resource_list = [remote_data]
+                    remote_name = remote_data.get("remote", "unknown")
+
+                _LOGGER.debug(
+                    "Remote %s has %d resources",
+                    remote_name,
+                    len(resource_list) if isinstance(resource_list, list) else 0
+                )
+
+                if not isinstance(resource_list, list):
+                    continue
 
                 for resource in resource_list:
+                    if not isinstance(resource, dict):
+                        continue
+
                     res_type = resource.get("type", "")
+                    _LOGGER.debug("Resource type: %s, keys: %s", res_type, resource.keys())
+
                     if res_type in (RESOURCE_TYPE_QEMU, RESOURCE_TYPE_LXC):
+                        # Handle both snake_case and kebab-case field names
+                        vmid = resource.get("vmid", 0)
+                        name = resource.get("name", f"VM {vmid}")
+                        node = resource.get("node", "unknown")
+
+                        # Get remote from resource if available, otherwise use parent
+                        res_remote = resource.get("remote", remote_name)
+
                         vm = VMInfo(
-                            vmid=resource.get("vmid", 0),
-                            name=resource.get("name", f"VM {resource.get('vmid', 'unknown')}"),
-                            node=resource.get("node", "unknown"),
-                            remote=remote_name,
+                            vmid=vmid,
+                            name=name,
+                            node=node,
+                            remote=res_remote,
                             vm_type=res_type,
                             status=resource.get("status", "unknown"),
                             mem=resource.get("mem", 0),
-                            maxmem=resource.get("maxmem", 0),
+                            maxmem=resource.get("maxmem", resource.get("max-mem", 0)),
                             cpu=resource.get("cpu", 0.0),
-                            maxcpu=resource.get("maxcpu", 0),
+                            maxcpu=resource.get("maxcpu", resource.get("max-cpu", 0)),
                             uptime=resource.get("uptime", 0),
                         )
                         vms.append(vm)
+                        _LOGGER.debug("Found VM: %s (id=%d) on %s/%s", vm.name, vm.vmid, vm.remote, vm.node)
+
+            _LOGGER.info("get_all_vms: found %d total VMs/containers", len(vms))
 
         except ProxmoxDatacenterManagerError as err:
             _LOGGER.error("Failed to get VMs: %s", err)
@@ -212,28 +305,143 @@ class ProxmoxDatacenterManagerAPI:
         return vms
 
     async def find_vm_by_name(self, name: str) -> VMInfo | None:
-        """Find a VM by name across all remotes and nodes."""
+        """Find a VM by name or VMID across all remotes and nodes."""
         vms = await self.get_all_vms()
+        _LOGGER.debug("find_vm_by_name('%s'): searching %d VMs", name, len(vms))
 
-        # Exact match first
+        # Try to parse as VMID first
+        try:
+            search_vmid = int(name)
+            for vm in vms:
+                if vm.vmid == search_vmid:
+                    _LOGGER.debug("Found VM by VMID: %s", vm)
+                    return vm
+        except ValueError:
+            pass  # Not a number, search by name
+
+        # Exact name match (case-insensitive)
         for vm in vms:
             if vm.name.lower() == name.lower():
+                _LOGGER.debug("Found VM by exact name match: %s", vm)
                 return vm
 
-        # Partial match as fallback
+        # Partial name match as fallback
         for vm in vms:
             if name.lower() in vm.name.lower():
+                _LOGGER.debug("Found VM by partial name match: %s", vm)
                 return vm
 
+        _LOGGER.warning("VM not found: '%s'. Available VMs: %s", name, [f"{v.name}({v.vmid})" for v in vms])
         return None
 
     async def get_nodes(self, remote: str) -> list[dict[str, Any]]:
-        """Get all nodes for a remote."""
-        return await self._request("GET", f"/pve/remotes/{remote}/nodes")
+        """Get all nodes for a remote from resources."""
+        # Extract nodes from the resources response
+        try:
+            resources = await self.get_resources()
+            nodes: list[dict[str, Any]] = []
+
+            for remote_data in resources:
+                if not isinstance(remote_data, dict):
+                    continue
+
+                remote_name = remote_data.get("remote", "")
+                if remote_name != remote:
+                    continue
+
+                resource_list = remote_data.get("resources", [])
+                if not isinstance(resource_list, list):
+                    continue
+
+                for resource in resource_list:
+                    if isinstance(resource, dict) and resource.get("type") == RESOURCE_TYPE_NODE:
+                        nodes.append(resource)
+
+            return nodes
+        except ProxmoxDatacenterManagerError:
+            return []
 
     async def get_remotes(self) -> list[dict[str, Any]]:
-        """Get all configured remotes."""
-        return await self._request("GET", "/pve/remotes")
+        """Get all configured remotes from resources."""
+        # Extract unique remotes from the resources response
+        # The /remotes endpoint returns subdirectories, not actual remotes
+        try:
+            resources = await self.get_resources()
+            remotes: list[dict[str, Any]] = []
+            seen_remotes: set[str] = set()
+
+            for remote_data in resources:
+                if not isinstance(remote_data, dict):
+                    continue
+
+                remote_name = remote_data.get("remote", "")
+                if remote_name and remote_name not in seen_remotes:
+                    seen_remotes.add(remote_name)
+                    remotes.append({
+                        "name": remote_name,
+                        "id": remote_name,
+                    })
+
+            _LOGGER.debug("get_remotes: found %d remotes from resources", len(remotes))
+            return remotes
+        except ProxmoxDatacenterManagerError:
+            return []
+
+    async def get_all_nodes(self) -> list[dict[str, Any]]:
+        """Get all nodes from all remotes."""
+        try:
+            resources = await self.get_resources()
+            nodes: list[dict[str, Any]] = []
+
+            for remote_data in resources:
+                if not isinstance(remote_data, dict):
+                    continue
+
+                remote_name = remote_data.get("remote", "unknown")
+                resource_list = remote_data.get("resources", [])
+
+                if not isinstance(resource_list, list):
+                    continue
+
+                for resource in resource_list:
+                    if isinstance(resource, dict) and resource.get("type") == RESOURCE_TYPE_NODE:
+                        node_info = dict(resource)
+                        node_info["remote"] = remote_name
+                        nodes.append(node_info)
+
+            _LOGGER.debug("get_all_nodes: found %d nodes", len(nodes))
+            return nodes
+        except ProxmoxDatacenterManagerError:
+            return []
+
+    async def debug_api_structure(self) -> dict[str, Any]:
+        """Debug helper to inspect API structure."""
+        debug_info: dict[str, Any] = {}
+
+        try:
+            # Test version endpoint
+            version = await self._request("GET", "/version")
+            debug_info["version"] = version
+        except Exception as e:
+            debug_info["version_error"] = str(e)
+
+        try:
+            # Test remotes endpoint
+            remotes = await self._request("GET", "/remotes")
+            debug_info["remotes_raw"] = remotes
+            debug_info["remotes_type"] = str(type(remotes))
+        except Exception as e:
+            debug_info["remotes_error"] = str(e)
+
+        try:
+            # Test resources endpoint
+            resources = await self._request("GET", "/resources/list")
+            debug_info["resources_raw"] = resources
+            debug_info["resources_type"] = str(type(resources))
+        except Exception as e:
+            debug_info["resources_error"] = str(e)
+
+        return debug_info
 
     async def migrate_vm_local(
         self,
@@ -245,7 +453,9 @@ class ProxmoxDatacenterManagerAPI:
         with_local_disks: bool = False,
     ) -> str:
         """Migrate a VM within the same cluster (local migration)."""
-        endpoint = f"/pve/remotes/{remote}/{vm_type}/{vmid}/migrate"
+        # Strip 'pve-' prefix for API endpoint
+        api_vm_type = _strip_pve_prefix(vm_type)
+        endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/migrate"
 
         data: dict[str, Any] = {
             "target": target_node,
@@ -271,7 +481,9 @@ class ProxmoxDatacenterManagerAPI:
         bridge_map: dict[str, str] | None = None,
     ) -> str:
         """Migrate a VM between different clusters (remote migration)."""
-        endpoint = f"/pve/remotes/{source_remote}/{vm_type}/{vmid}/remote-migrate"
+        # Strip 'pve-' prefix for API endpoint
+        api_vm_type = _strip_pve_prefix(vm_type)
+        endpoint = f"/pve/remotes/{source_remote}/{api_vm_type}/{vmid}/remote-migrate"
 
         data: dict[str, Any] = {
             "target-remote": target_remote,
@@ -333,7 +545,8 @@ class ProxmoxDatacenterManagerAPI:
         self, remote: str, vmid: int, vm_type: str = RESOURCE_TYPE_QEMU
     ) -> str:
         """Start a VM or container."""
-        endpoint = f"/pve/remotes/{remote}/{vm_type}/{vmid}/start"
+        api_vm_type = _strip_pve_prefix(vm_type)
+        endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/start"
         result = await self._request("POST", endpoint)
         return result.get("data", result) if isinstance(result, dict) else result
 
@@ -341,7 +554,8 @@ class ProxmoxDatacenterManagerAPI:
         self, remote: str, vmid: int, vm_type: str = RESOURCE_TYPE_QEMU
     ) -> str:
         """Stop a VM or container."""
-        endpoint = f"/pve/remotes/{remote}/{vm_type}/{vmid}/stop"
+        api_vm_type = _strip_pve_prefix(vm_type)
+        endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/stop"
         result = await self._request("POST", endpoint)
         return result.get("data", result) if isinstance(result, dict) else result
 
@@ -349,7 +563,8 @@ class ProxmoxDatacenterManagerAPI:
         self, remote: str, vmid: int, vm_type: str = RESOURCE_TYPE_QEMU
     ) -> str:
         """Shutdown a VM or container gracefully."""
-        endpoint = f"/pve/remotes/{remote}/{vm_type}/{vmid}/shutdown"
+        api_vm_type = _strip_pve_prefix(vm_type)
+        endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/shutdown"
         result = await self._request("POST", endpoint)
         return result.get("data", result) if isinstance(result, dict) else result
 
@@ -357,5 +572,6 @@ class ProxmoxDatacenterManagerAPI:
         self, remote: str, vmid: int, vm_type: str = RESOURCE_TYPE_QEMU
     ) -> dict[str, Any]:
         """Get the status of a specific VM."""
-        endpoint = f"/pve/remotes/{remote}/{vm_type}/{vmid}/status"
+        api_vm_type = _strip_pve_prefix(vm_type)
+        endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/status"
         return await self._request("GET", endpoint)

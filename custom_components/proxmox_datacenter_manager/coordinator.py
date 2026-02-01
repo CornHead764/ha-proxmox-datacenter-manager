@@ -71,21 +71,26 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
             # Get all VMs
             self._data.vms = await self.api.get_all_vms()
 
-            # Get remotes
+            # Get remotes (extracted from resources)
             try:
                 self._data.remotes = await self.api.get_remotes()
+                _LOGGER.debug("Found %d remotes", len(self._data.remotes))
             except ProxmoxDatacenterManagerError:
                 _LOGGER.debug("Failed to get remotes list")
 
-            # Get nodes for each remote
-            for remote in self._data.remotes:
-                remote_name = remote.get("name", remote.get("id"))
-                if remote_name:
-                    try:
-                        nodes = await self.api.get_nodes(remote_name)
-                        self._data.nodes[remote_name] = nodes if isinstance(nodes, list) else []
-                    except ProxmoxDatacenterManagerError:
-                        _LOGGER.debug("Failed to get nodes for remote %s", remote_name)
+            # Get all nodes (extracted from resources)
+            try:
+                all_nodes = await self.api.get_all_nodes()
+                # Group nodes by remote
+                self._data.nodes = {}
+                for node in all_nodes:
+                    remote_name = node.get("remote", "unknown")
+                    if remote_name not in self._data.nodes:
+                        self._data.nodes[remote_name] = []
+                    self._data.nodes[remote_name].append(node)
+                _LOGGER.debug("Found %d total nodes across %d remotes", len(all_nodes), len(self._data.nodes))
+            except ProxmoxDatacenterManagerError:
+                _LOGGER.debug("Failed to get nodes list")
 
             # Get version info
             try:
@@ -135,9 +140,18 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
             _LOGGER.error("Failed to get migration task status: %s", err)
 
     async def find_vm_by_name(self, name: str) -> VMInfo | None:
-        """Find a VM by name."""
+        """Find a VM by name or VMID."""
+        # Try to parse as VMID first
+        search_vmid: int | None = None
+        try:
+            search_vmid = int(name)
+        except ValueError:
+            pass
+
         # First check cached data
         for vm in self._data.vms:
+            if search_vmid is not None and vm.vmid == search_vmid:
+                return vm
             if vm.name.lower() == name.lower():
                 return vm
 
@@ -145,6 +159,8 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
         await self.async_refresh()
 
         for vm in self._data.vms:
+            if search_vmid is not None and vm.vmid == search_vmid:
+                return vm
             if vm.name.lower() == name.lower():
                 return vm
 
@@ -153,6 +169,7 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
             if name.lower() in vm.name.lower():
                 return vm
 
+        _LOGGER.warning("VM not found: '%s'. Available: %s", name, [f"{v.name}({v.vmid})" for v in self._data.vms])
         return None
 
     async def migrate_vm(

@@ -235,6 +235,44 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
         if coordinator:
             coordinator.reset_migration_state()
 
+    async def handle_list_vms(call: ServiceCall) -> dict[str, Any]:
+        """Handle the list_vms service call - useful for debugging."""
+        coordinator = await get_coordinator()
+        if not coordinator:
+            return {"success": False, "error": "No PDM instance configured"}
+
+        try:
+            vms = await coordinator.api.get_all_vms()
+            return {
+                "success": True,
+                "count": len(vms),
+                "vms": [
+                    {
+                        "name": vm.name,
+                        "vmid": vm.vmid,
+                        "node": vm.node,
+                        "remote": vm.remote,
+                        "type": vm.vm_type,
+                        "status": vm.status,
+                    }
+                    for vm in vms
+                ],
+            }
+        except ProxmoxDatacenterManagerError as err:
+            return {"success": False, "error": str(err)}
+
+    async def handle_debug_api(call: ServiceCall) -> dict[str, Any]:
+        """Handle the debug_api service call - inspect raw API responses."""
+        coordinator = await get_coordinator()
+        if not coordinator:
+            return {"success": False, "error": "No PDM instance configured"}
+
+        try:
+            debug_info = await coordinator.api.debug_api_structure()
+            return {"success": True, **debug_info}
+        except Exception as err:
+            return {"success": False, "error": str(err)}
+
     # Register all services
     if not hass.services.has_service(DOMAIN, SERVICE_MIGRATE_VM):
         hass.services.async_register(
@@ -279,9 +317,25 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
             handle_reset_migration_state,
         )
 
+    if not hass.services.has_service(DOMAIN, "list_vms"):
+        hass.services.async_register(
+            DOMAIN,
+            "list_vms",
+            handle_list_vms,
+            supports_response=SupportsResponse.ONLY,
+        )
+
+    if not hass.services.has_service(DOMAIN, "debug_api"):
+        hass.services.async_register(
+            DOMAIN,
+            "debug_api",
+            handle_debug_api,
+            supports_response=SupportsResponse.ONLY,
+        )
+
 
 def _async_unregister_services(hass: HomeAssistant) -> None:
     """Unregister services."""
-    for service in [SERVICE_MIGRATE_VM, "start_vm", "stop_vm", "shutdown_vm", "reset_migration_state"]:
+    for service in [SERVICE_MIGRATE_VM, "start_vm", "stop_vm", "shutdown_vm", "reset_migration_state", "list_vms", "debug_api"]:
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)

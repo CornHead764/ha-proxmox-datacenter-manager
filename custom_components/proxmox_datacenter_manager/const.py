@@ -18,9 +18,11 @@ API_BASE = "/api2/json"
 API_RESOURCES = "/resources/list"
 API_ACCESS_TICKET = "/access/ticket"
 
-# Resource types
-RESOURCE_TYPE_QEMU = "qemu"
-RESOURCE_TYPE_LXC = "lxc"
+# Resource types (PDM uses "pve-" prefix)
+RESOURCE_TYPE_QEMU = "pve-qemu"
+RESOURCE_TYPE_LXC = "pve-lxc"
+RESOURCE_TYPE_NODE = "pve-node"
+RESOURCE_TYPE_STORAGE = "pve-storage"
 
 # Migration states
 MIGRATION_STATE_IDLE = "idle"
