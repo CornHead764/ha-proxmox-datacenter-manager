@@ -11,7 +11,7 @@ migrate_vm:
         text: {}
     target_host:
       name: Target Host
-      description: "The target node to migrate the VM to. For cross-cluster migrations, the node's IP is looked up and passed as target-endpoint."
+      description: "The target node name. Used for local migrations and to auto-detect target_remote for cross-cluster."
       required: true
       example: "pve-node2"
       selector:
@@ -21,6 +21,13 @@ migrate_vm:
       description: "The target remote/cluster. Leave empty to auto-detect from target_host."
       required: false
       example: "datacenter2"
+      selector:
+        text: {}
+    target_endpoint:
+      name: Target Endpoint
+      description: "For cross-cluster migrations: IP:port of target node (e.g., '192.168.1.100:8006'). Get this from PDM GUI migration dialog. If not specified, PDM auto-selects a node."
+      required: false
+      example: "192.168.1.100:8006"
       selector:
         text: {}
     online:

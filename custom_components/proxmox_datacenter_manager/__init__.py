@@ -24,6 +24,7 @@ from .const import (
     ATTR_BRIDGE_MAP,
     ATTR_ONLINE,
     ATTR_STORAGE_MAP,
+    ATTR_TARGET_ENDPOINT,
     ATTR_TARGET_HOST,
     ATTR_TARGET_REMOTE,
     ATTR_VM_NAME,
@@ -141,14 +142,16 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
         vm_name = call.data[ATTR_VM_NAME]
         target_host = call.data[ATTR_TARGET_HOST]
         target_remote = call.data.get(ATTR_TARGET_REMOTE)
+        target_endpoint = call.data.get(ATTR_TARGET_ENDPOINT)
         online = call.data.get(ATTR_ONLINE, True)
         with_local_disks = call.data.get(ATTR_WITH_LOCAL_DISKS, False)
         storage_map = call.data.get(ATTR_STORAGE_MAP)
         bridge_map = call.data.get(ATTR_BRIDGE_MAP)
 
         _LOGGER.debug(
-            "migrate_vm service called: vm=%s, target_host=%s, target_remote=%s, online=%s",
-            vm_name, target_host, target_remote, online
+            "migrate_vm service called: vm=%s, target_host=%s, target_remote=%s, "
+            "target_endpoint=%s, online=%s",
+            vm_name, target_host, target_remote, target_endpoint, online
         )
 
         try:
@@ -156,6 +159,7 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
                 vm_name=vm_name,
                 target_host=target_host,
                 target_remote=target_remote,
+                target_endpoint=target_endpoint,
                 online=online,
                 with_local_disks=with_local_disks,
                 storage_map=storage_map,

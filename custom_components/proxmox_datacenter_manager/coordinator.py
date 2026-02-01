@@ -177,6 +177,7 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
         vm_name: str,
         target_host: str,
         target_remote: str | None = None,
+        target_endpoint: str | None = None,
         online: bool = True,
         with_local_disks: bool = False,
         storage_map: dict[str, str] | None = None,
@@ -187,6 +188,9 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
         If target_remote is not specified, auto-detects which remote the
         target_host belongs to. This allows users to just specify a node
         name and have the system figure out if it's local or cross-cluster.
+
+        For cross-cluster migrations, target_endpoint (IP:port) can be specified
+        to direct the VM to a specific node in the target cluster.
         """
         async with self._migration_lock:
             # Update state to searching
@@ -254,6 +258,7 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
                         vmid=vm.vmid,
                         target_remote=target_remote,
                         target_node=target_host,
+                        target_endpoint=target_endpoint,
                         vm_type=vm.vm_type,
                         online=online,
                         delete_source=True,

@@ -543,6 +543,7 @@ class ProxmoxDatacenterManagerAPI:
         vmid: int,
         target_remote: str,
         target_node: str | None = None,
+        target_endpoint: str | None = None,
         vm_type: str = RESOURCE_TYPE_QEMU,
         online: bool = True,
         delete_source: bool = True,
@@ -555,7 +556,8 @@ class ProxmoxDatacenterManagerAPI:
             source_remote: The source remote/cluster name
             vmid: The VM ID
             target_remote: The destination remote/cluster name
-            target_node: The target node within the destination remote
+            target_node: The target node name (for logging)
+            target_endpoint: IP:port of target node (e.g., '192.168.1.100:8006')
             vm_type: The VM type (pve-qemu or pve-lxc)
             online: Perform live migration if VM is running
             delete_source: Delete VM from source after migration
@@ -592,39 +594,22 @@ class ProxmoxDatacenterManagerAPI:
             "online": online,
         }
 
-        # Try to get target node's IP address for target-endpoint
-        # PDM GUI shows target-endpoint by IP address, not node name
-        if target_node:
-            node_info = await self.find_node_info(target_node)
-            if node_info:
-                # Look for IP address in common field names
-                node_ip = (
-                    node_info.get("ip") or
-                    node_info.get("address") or
-                    node_info.get("host") or
-                    node_info.get("endpoint")
-                )
-                if node_ip:
-                    # Format: IP:port (default Proxmox port is 8006)
-                    if ":" not in str(node_ip):
-                        node_ip = f"{node_ip}:8006"
-                    data["target-endpoint"] = node_ip
-                    _LOGGER.info(
-                        "Cross-cluster migration: using target-endpoint '%s' for node '%s'",
-                        node_ip, target_node
-                    )
-                else:
-                    _LOGGER.warning(
-                        "Cross-cluster migration: could not find IP for node '%s'. "
-                        "Available node fields: %s. PDM will auto-select a node.",
-                        target_node, list(node_info.keys())
-                    )
-            else:
-                _LOGGER.warning(
-                    "Cross-cluster migration: target_node '%s' not found in PDM data. "
-                    "PDM will auto-select a node in remote '%s'.",
-                    target_node, target_remote
-                )
+        # Use target_endpoint if provided (IP:port format from PDM GUI)
+        if target_endpoint:
+            # Ensure format includes port
+            if ":" not in target_endpoint:
+                target_endpoint = f"{target_endpoint}:8006"
+            data["target-endpoint"] = target_endpoint
+            _LOGGER.info(
+                "Cross-cluster migration: using target-endpoint '%s' for node '%s'",
+                target_endpoint, target_node or "unspecified"
+            )
+        elif target_node:
+            _LOGGER.info(
+                "Cross-cluster migration: no target_endpoint specified for node '%s'. "
+                "PDM will auto-select a node in remote '%s'.",
+                target_node, target_remote
+            )
 
         _LOGGER.info(
             "migrate_vm_remote: VM %d from %s to %s",
