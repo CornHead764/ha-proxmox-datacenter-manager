@@ -77,3 +77,11 @@ shutdown_vm:
 reset_migration_state:
   name: Reset Migration State
   description: Reset the migration state sensor to idle
+
+list_vms:
+  name: List VMs
+  description: List all VMs and containers discovered by PDM (useful for debugging)
+
+debug_api:
+  name: Debug API
+  description: Inspect raw API responses from PDM (useful for troubleshooting connection issues)
