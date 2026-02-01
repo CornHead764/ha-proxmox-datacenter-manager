@@ -424,13 +424,29 @@ class ProxmoxDatacenterManagerAPI:
         Returns:
             The remote name if found, None otherwise
         """
+        node_info = await self.find_node_info(node_name)
+        if node_info:
+            return node_info.get("remote")
+        return None
+
+    async def find_node_info(self, node_name: str) -> dict[str, Any] | None:
+        """Find full node info including IP address.
+
+        Args:
+            node_name: The name of the node to find
+
+        Returns:
+            Full node dict if found, None otherwise
+        """
         nodes = await self.get_all_nodes()
         for node in nodes:
             name = node.get("node", node.get("name", ""))
             if name.lower() == node_name.lower():
-                remote = node.get("remote")
-                _LOGGER.debug("Found node '%s' in remote '%s'", node_name, remote)
-                return remote
+                _LOGGER.debug(
+                    "Found node '%s' in remote '%s', full info: %s",
+                    node_name, node.get("remote"), node
+                )
+                return node
         _LOGGER.warning(
             "Node '%s' not found. Available nodes: %s",
             node_name,
@@ -464,6 +480,15 @@ class ProxmoxDatacenterManagerAPI:
             debug_info["resources_type"] = str(type(resources))
         except Exception as e:
             debug_info["resources_error"] = str(e)
+
+        try:
+            # Get all nodes with their fields (helpful for finding IP address field)
+            nodes = await self.get_all_nodes()
+            debug_info["nodes"] = nodes
+            if nodes:
+                debug_info["node_fields"] = list(nodes[0].keys()) if nodes else []
+        except Exception as e:
+            debug_info["nodes_error"] = str(e)
 
         return debug_info
 
@@ -559,9 +584,6 @@ class ProxmoxDatacenterManagerAPI:
             bridge_mappings = ["vmbr0:vmbr0"]
 
         # Build the data payload
-        # Note: PDM does not support specifying target node for cross-cluster migrations
-        # The target cluster auto-selects which node receives the VM
-        # To move to a specific node, do a local migration within target cluster after
         data: dict[str, Any] = {
             "target": target_remote,
             "target-storage": storage_mappings,
@@ -570,16 +592,42 @@ class ProxmoxDatacenterManagerAPI:
             "online": online,
         }
 
+        # Try to get target node's IP address for target-endpoint
+        # PDM GUI shows target-endpoint by IP address, not node name
         if target_node:
-            _LOGGER.warning(
-                "Cross-cluster migration: target_node '%s' specified but PDM does not "
-                "support node selection for remote migrations. VM will go to any available "
-                "node in remote '%s'. Use a follow-up local migration to move to specific node.",
-                target_node, target_remote
-            )
+            node_info = await self.find_node_info(target_node)
+            if node_info:
+                # Look for IP address in common field names
+                node_ip = (
+                    node_info.get("ip") or
+                    node_info.get("address") or
+                    node_info.get("host") or
+                    node_info.get("endpoint")
+                )
+                if node_ip:
+                    # Format: IP:port (default Proxmox port is 8006)
+                    if ":" not in str(node_ip):
+                        node_ip = f"{node_ip}:8006"
+                    data["target-endpoint"] = node_ip
+                    _LOGGER.info(
+                        "Cross-cluster migration: using target-endpoint '%s' for node '%s'",
+                        node_ip, target_node
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Cross-cluster migration: could not find IP for node '%s'. "
+                        "Available node fields: %s. PDM will auto-select a node.",
+                        target_node, list(node_info.keys())
+                    )
+            else:
+                _LOGGER.warning(
+                    "Cross-cluster migration: target_node '%s' not found in PDM data. "
+                    "PDM will auto-select a node in remote '%s'.",
+                    target_node, target_remote
+                )
 
         _LOGGER.info(
-            "migrate_vm_remote: VM %d from %s to %s (node selection not supported)",
+            "migrate_vm_remote: VM %d from %s to %s",
             vmid, source_remote, target_remote
         )
         _LOGGER.debug("migrate_vm_remote: endpoint=%s, data=%s", endpoint, data)
