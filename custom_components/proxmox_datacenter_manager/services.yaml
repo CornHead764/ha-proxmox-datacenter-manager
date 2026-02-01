@@ -37,6 +37,18 @@ migrate_vm:
       default: false
       selector:
         boolean:
+    storage_map:
+      name: Storage Mapping
+      description: Storage mapping for remote migrations (e.g., {"local-zfs": "local-zfs"})
+      required: false
+      selector:
+        object:
+    bridge_map:
+      name: Bridge Mapping
+      description: Network bridge mapping for remote migrations (e.g., {"vmbr0": "vmbr0"})
+      required: false
+      selector:
+        object:
 
 start_vm:
   name: Start VM

@@ -200,6 +200,13 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
             # Determine if this is a local or remote migration
             is_remote_migration = target_remote is not None and target_remote != vm.remote
 
+            _LOGGER.info(
+                "Migrating VM %s (id=%d) from %s/%s to %s%s, is_remote=%s",
+                vm.name, vm.vmid, vm.remote, vm.node, target_host,
+                f" on {target_remote}" if target_remote else "",
+                is_remote_migration
+            )
+
             # Update state to migrating
             self._data.migration_state = MIGRATION_STATE_MIGRATING
 

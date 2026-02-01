@@ -457,14 +457,19 @@ class ProxmoxDatacenterManagerAPI:
         api_vm_type = _strip_pve_prefix(vm_type)
         endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/migrate"
 
+        # Use boolean values, not integers
         data: dict[str, Any] = {
             "target": target_node,
-            "online": 1 if online else 0,
         }
 
-        if with_local_disks:
-            data["with-local-disks"] = 1
+        # Only include optional boolean parameters if True
+        if online:
+            data["online"] = True
 
+        if with_local_disks:
+            data["with-local-disks"] = True
+
+        _LOGGER.debug("migrate_vm_local: endpoint=%s, data=%s", endpoint, data)
         result = await self._request("POST", endpoint, data=data)
         return result.get("data", result) if isinstance(result, dict) else result
 
@@ -480,30 +485,41 @@ class ProxmoxDatacenterManagerAPI:
         storage_map: dict[str, str] | None = None,
         bridge_map: dict[str, str] | None = None,
     ) -> str:
-        """Migrate a VM between different clusters (remote migration)."""
+        """Migrate a VM between different clusters (remote migration).
+
+        Note: For remote migration, target_node is included in target-endpoint
+        if needed. The 'target' parameter is the remote name.
+        """
         # Strip 'pve-' prefix for API endpoint
         api_vm_type = _strip_pve_prefix(vm_type)
         endpoint = f"/pve/remotes/{source_remote}/{api_vm_type}/{vmid}/remote-migrate"
 
-        data: dict[str, Any] = {
-            "target-remote": target_remote,
-            "target-node": target_node,
-            "online": 1 if online else 0,
-            "delete": 1 if delete_source else 0,
-        }
+        # Build storage and bridge mappings (required for remote migration)
+        # Format: ["source:target", ...]
+        storage_mappings: list[str] = []
+        bridge_mappings: list[str] = []
 
         if storage_map:
-            # Format: "source-storage:target-storage,..."
-            data["target-storage"] = ",".join(
-                f"{k}:{v}" for k, v in storage_map.items()
-            )
+            storage_mappings = [f"{k}:{v}" for k, v in storage_map.items()]
+        else:
+            # Default: same storage name on target
+            storage_mappings = ["local:local"]
 
         if bridge_map:
-            # Format: "source-bridge:target-bridge,..."
-            data["target-bridge"] = ",".join(
-                f"{k}:{v}" for k, v in bridge_map.items()
-            )
+            bridge_mappings = [f"{k}:{v}" for k, v in bridge_map.items()]
+        else:
+            # Default: same bridge name on target
+            bridge_mappings = ["vmbr0:vmbr0"]
 
+        data: dict[str, Any] = {
+            "target": target_remote,
+            "target-storage": storage_mappings,
+            "target-bridge": bridge_mappings,
+            "delete": delete_source,
+            "online": online,
+        }
+
+        _LOGGER.debug("migrate_vm_remote: endpoint=%s, data=%s", endpoint, data)
         result = await self._request("POST", endpoint, data=data)
         return result.get("data", result) if isinstance(result, dict) else result
 

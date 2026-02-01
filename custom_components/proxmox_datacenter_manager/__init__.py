@@ -21,7 +21,9 @@ from .api import (
     ProxmoxDatacenterManagerError,
 )
 from .const import (
+    ATTR_BRIDGE_MAP,
     ATTR_ONLINE,
+    ATTR_STORAGE_MAP,
     ATTR_TARGET_HOST,
     ATTR_TARGET_REMOTE,
     ATTR_VM_NAME,
@@ -48,6 +50,8 @@ SERVICE_MIGRATE_VM_SCHEMA = vol.Schema(
         vol.Optional(ATTR_TARGET_REMOTE): cv.string,
         vol.Optional(ATTR_ONLINE, default=True): cv.boolean,
         vol.Optional(ATTR_WITH_LOCAL_DISKS, default=False): cv.boolean,
+        vol.Optional(ATTR_STORAGE_MAP): dict,  # For remote migrations: {"source": "target"}
+        vol.Optional(ATTR_BRIDGE_MAP): dict,   # For remote migrations: {"source": "target"}
     }
 )
 
@@ -139,6 +143,13 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
         target_remote = call.data.get(ATTR_TARGET_REMOTE)
         online = call.data.get(ATTR_ONLINE, True)
         with_local_disks = call.data.get(ATTR_WITH_LOCAL_DISKS, False)
+        storage_map = call.data.get(ATTR_STORAGE_MAP)
+        bridge_map = call.data.get(ATTR_BRIDGE_MAP)
+
+        _LOGGER.debug(
+            "migrate_vm service called: vm=%s, target_host=%s, target_remote=%s, online=%s",
+            vm_name, target_host, target_remote, online
+        )
 
         try:
             task = await coordinator.migrate_vm(
@@ -147,6 +158,8 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
                 target_remote=target_remote,
                 online=online,
                 with_local_disks=with_local_disks,
+                storage_map=storage_map,
+                bridge_map=bridge_map,
             )
             return {
                 "success": True,
