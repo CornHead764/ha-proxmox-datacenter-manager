@@ -559,7 +559,9 @@ class ProxmoxDatacenterManagerAPI:
             bridge_mappings = ["vmbr0:vmbr0"]
 
         # Build the data payload
-        # Try including target-endpoint with the node for PDM to use
+        # Note: PDM does not support specifying target node for cross-cluster migrations
+        # The target cluster auto-selects which node receives the VM
+        # To move to a specific node, do a local migration within target cluster after
         data: dict[str, Any] = {
             "target": target_remote,
             "target-storage": storage_mappings,
@@ -568,13 +570,17 @@ class ProxmoxDatacenterManagerAPI:
             "online": online,
         }
 
-        # Try specifying target-endpoint to direct to specific node
         if target_node:
-            data["target-endpoint"] = target_node
+            _LOGGER.warning(
+                "Cross-cluster migration: target_node '%s' specified but PDM does not "
+                "support node selection for remote migrations. VM will go to any available "
+                "node in remote '%s'. Use a follow-up local migration to move to specific node.",
+                target_node, target_remote
+            )
 
         _LOGGER.info(
-            "migrate_vm_remote: VM %d from %s to %s (node: %s)",
-            vmid, source_remote, target_remote, target_node or "auto"
+            "migrate_vm_remote: VM %d from %s to %s (node selection not supported)",
+            vmid, source_remote, target_remote
         )
         _LOGGER.debug("migrate_vm_remote: endpoint=%s, data=%s", endpoint, data)
         result = await self._request("POST", endpoint, data=data)
