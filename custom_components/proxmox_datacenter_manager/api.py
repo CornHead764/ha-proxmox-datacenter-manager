@@ -136,9 +136,10 @@ class ProxmoxDatacenterManagerAPI:
         url = f"{self._base_url}{endpoint}"
         headers = self._get_auth_header()
 
-        _LOGGER.debug("PDM API request: %s %s params=%s", method, url, params)
+        _LOGGER.debug("PDM API request: %s %s params=%s data=%s", method, url, params, data)
 
         try:
+            # PDM API expects JSON for POST requests
             async with session.request(
                 method,
                 url,
@@ -448,11 +449,22 @@ class ProxmoxDatacenterManagerAPI:
         remote: str,
         vmid: int,
         target_node: str,
+        source_node: str | None = None,
         vm_type: str = RESOURCE_TYPE_QEMU,
         online: bool = True,
         with_local_disks: bool = False,
     ) -> str:
-        """Migrate a VM within the same cluster (local migration)."""
+        """Migrate a VM within the same cluster (local migration).
+
+        Args:
+            remote: The remote/cluster name
+            vmid: The VM ID
+            target_node: The destination node name
+            source_node: The source node name (optional, PDM can auto-detect)
+            vm_type: The VM type (pve-qemu or pve-lxc)
+            online: Perform live migration if VM is running
+            with_local_disks: Enable live storage migration for local disks
+        """
         # Strip 'pve-' prefix for API endpoint
         api_vm_type = _strip_pve_prefix(vm_type)
         endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/migrate"
@@ -461,6 +473,10 @@ class ProxmoxDatacenterManagerAPI:
         data: dict[str, Any] = {
             "target": target_node,
         }
+
+        # Include source node if provided (helps PDM locate the VM)
+        if source_node:
+            data["node"] = source_node
 
         # Only include optional boolean parameters if True
         if online:

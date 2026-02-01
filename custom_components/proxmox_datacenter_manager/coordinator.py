@@ -244,6 +244,7 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
                         remote=vm.remote,
                         vmid=vm.vmid,
                         target_node=target_host,
+                        source_node=vm.node,
                         vm_type=vm.vm_type,
                         online=online,
                         with_local_disks=with_local_disks,

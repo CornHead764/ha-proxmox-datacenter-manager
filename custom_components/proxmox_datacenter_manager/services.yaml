@@ -4,87 +4,89 @@ migrate_vm:
   fields:
     vm_name:
       name: VM Name
-      description: The name of the virtual machine to migrate
+      description: The name or VMID of the virtual machine to migrate
       required: true
       example: "my-vm"
       selector:
-        text:
+        text: {}
     target_host:
       name: Target Host
       description: The target node/host to migrate the VM to
       required: true
       example: "pve-node2"
       selector:
-        text:
+        text: {}
     target_remote:
       name: Target Remote
       description: The target remote/cluster (for cross-cluster migrations). Leave empty for same-cluster migrations.
       required: false
       example: "datacenter2"
       selector:
-        text:
+        text: {}
     online:
       name: Online Migration
       description: Perform live migration (VM stays running)
       required: false
       default: true
       selector:
-        boolean:
+        boolean: {}
     with_local_disks:
       name: With Local Disks
       description: Include local disks in the migration (for local migrations only)
       required: false
       default: false
       selector:
-        boolean:
+        boolean: {}
     storage_map:
       name: Storage Mapping
-      description: Storage mapping for remote migrations (e.g., {"local-zfs": "local-zfs"})
+      description: "Storage mapping for remote migrations. Format: {\"source-storage\": \"target-storage\"}"
       required: false
+      example: '{"local-zfs": "local-lvm"}'
       selector:
-        object:
+        object: {}
     bridge_map:
       name: Bridge Mapping
-      description: Network bridge mapping for remote migrations (e.g., {"vmbr0": "vmbr0"})
+      description: "Network bridge mapping for remote migrations. Format: {\"source-bridge\": \"target-bridge\"}"
       required: false
+      example: '{"vmbr0": "vmbr0"}'
       selector:
-        object:
+        object: {}
 
 start_vm:
   name: Start VM
-  description: Start a virtual machine by name
+  description: Start a virtual machine by name or VMID
   fields:
     vm_name:
       name: VM Name
-      description: The name of the virtual machine to start
+      description: The name or VMID of the virtual machine to start
       required: true
       example: "my-vm"
       selector:
-        text:
+        text: {}
 
 stop_vm:
   name: Stop VM
-  description: Stop a virtual machine by name
+  description: Stop a virtual machine by name or VMID (force stop)
   fields:
     vm_name:
       name: VM Name
-      description: The name of the virtual machine to stop
+      description: The name or VMID of the virtual machine to stop
       required: true
       example: "my-vm"
       selector:
-        text:
+        text: {}
 
 shutdown_vm:
   name: Shutdown VM
-  description: Gracefully shutdown a virtual machine by name
+  description: Gracefully shutdown a virtual machine by name or VMID
   fields:
     vm_name:
       name: VM Name
-      description: The name of the virtual machine to shutdown
+      description: The name or VMID of the virtual machine to shutdown
       required: true
       example: "my-vm"
       selector:
-        text:
+        text: {}
 
 reset_migration_state:
   name: Reset Migration State

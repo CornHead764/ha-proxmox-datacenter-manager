@@ -8,10 +8,16 @@ CONF_PORT = "port"
 CONF_API_TOKEN_ID = "api_token_id"
 CONF_API_TOKEN_SECRET = "api_token_secret"
 CONF_VERIFY_SSL = "verify_ssl"
+CONF_NODE_SENSORS = "node_sensors"
+CONF_VM_SENSORS = "vm_sensors"
+CONF_VM_FILTER = "vm_filter"
 
 # Default values
 DEFAULT_PORT = 8443
 DEFAULT_VERIFY_SSL = True
+DEFAULT_NODE_SENSORS = True
+DEFAULT_VM_SENSORS = False
+DEFAULT_VM_FILTER = ""
 
 # API endpoints
 API_BASE = "/api2/json"
