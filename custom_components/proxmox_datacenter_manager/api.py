@@ -526,14 +526,11 @@ class ProxmoxDatacenterManagerAPI:
     ) -> str:
         """Migrate a VM between different clusters (remote migration).
 
-        Note: PDM auto-selects the target node within the remote cluster.
-        The target_node parameter is logged for reference but not used in the API call.
-
         Args:
             source_remote: The source remote/cluster name
             vmid: The VM ID
             target_remote: The destination remote/cluster name
-            target_node: For logging only - PDM auto-selects node in target cluster
+            target_node: The target node within the destination remote
             vm_type: The VM type (pve-qemu or pve-lxc)
             online: Perform live migration if VM is running
             delete_source: Delete VM from source after migration
@@ -561,8 +558,8 @@ class ProxmoxDatacenterManagerAPI:
             # Default: same bridge name on target
             bridge_mappings = ["vmbr0:vmbr0"]
 
-        # Note: PDM does not support target-node for remote migrations
-        # The cluster auto-selects which node receives the VM
+        # Build the data payload
+        # Try including target-endpoint with the node for PDM to use
         data: dict[str, Any] = {
             "target": target_remote,
             "target-storage": storage_mappings,
@@ -571,17 +568,13 @@ class ProxmoxDatacenterManagerAPI:
             "online": online,
         }
 
+        # Try specifying target-endpoint to direct to specific node
         if target_node:
-            _LOGGER.warning(
-                "Cross-cluster migration: target_node '%s' specified but PDM "
-                "auto-selects the node. VM will migrate to remote '%s' but may "
-                "land on any available node in that cluster.",
-                target_node, target_remote
-            )
+            data["target-endpoint"] = target_node
 
         _LOGGER.info(
-            "migrate_vm_remote: VM %d from %s to remote %s",
-            vmid, source_remote, target_remote
+            "migrate_vm_remote: VM %d from %s to %s (node: %s)",
+            vmid, source_remote, target_remote, target_node or "auto"
         )
         _LOGGER.debug("migrate_vm_remote: endpoint=%s, data=%s", endpoint, data)
         result = await self._request("POST", endpoint, data=data)
