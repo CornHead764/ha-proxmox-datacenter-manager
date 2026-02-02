@@ -208,9 +208,25 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
 
             # Auto-detect target remote from target host if not specified
             if target_remote is None:
-                detected_remote = await self.api.find_node_remote(target_host)
-                if detected_remote:
-                    target_remote = detected_remote
+                # First check if there are multiple nodes with the same name
+                matching_nodes = await self.api.find_all_nodes_by_name(target_host)
+
+                if len(matching_nodes) > 1:
+                    # Ambiguous node name - multiple matches across remotes
+                    remotes_with_node = [n.get("remote") for n in matching_nodes]
+                    error_msg = (
+                        f"Ambiguous target_host '{target_host}' - "
+                        f"found in multiple remotes: {remotes_with_node}. "
+                        f"Please specify 'target_remote' to disambiguate."
+                    )
+                    _LOGGER.error(error_msg)
+                    self._data.migration_state = MIGRATION_STATE_FAILED
+                    self._data.last_migration_error = error_msg
+                    self.async_set_updated_data(self._data)
+                    raise ValueError(error_msg)
+
+                if len(matching_nodes) == 1:
+                    target_remote = matching_nodes[0].get("remote")
                     _LOGGER.info(
                         "Auto-detected target remote '%s' for node '%s'",
                         target_remote, target_host

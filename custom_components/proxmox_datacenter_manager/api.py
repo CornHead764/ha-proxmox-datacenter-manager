@@ -422,35 +422,85 @@ class ProxmoxDatacenterManagerAPI:
             node_name: The name of the node to find
 
         Returns:
-            The remote name if found, None otherwise
+            The remote name if found, None if not found or ambiguous.
+            For ambiguous cases (same node name in multiple remotes),
+            returns None and logs an error.
         """
         node_info = await self.find_node_info(node_name)
         if node_info:
             return node_info.get("remote")
         return None
 
-    async def find_node_info(self, node_name: str) -> dict[str, Any] | None:
-        """Find full node info including IP address.
+    async def find_all_nodes_by_name(self, node_name: str) -> list[dict[str, Any]]:
+        """Find all nodes matching a name across all remotes.
+
+        Useful for detecting ambiguous node names and presenting options to users.
 
         Args:
             node_name: The name of the node to find
 
         Returns:
-            Full node dict if found, None otherwise
+            List of all matching nodes (may be empty, one, or multiple)
         """
         nodes = await self.get_all_nodes()
+        matching_nodes: list[dict[str, Any]] = []
+
         for node in nodes:
             name = node.get("node", node.get("name", ""))
             if name.lower() == node_name.lower():
-                _LOGGER.debug(
-                    "Found node '%s' in remote '%s', full info: %s",
-                    node_name, node.get("remote"), node
-                )
-                return node
-        _LOGGER.warning(
-            "Node '%s' not found. Available nodes: %s",
-            node_name,
-            [f"{n.get('node', n.get('name'))}@{n.get('remote')}" for n in nodes]
+                matching_nodes.append(node)
+
+        return matching_nodes
+
+    async def find_node_info(
+        self, node_name: str, target_remote: str | None = None
+    ) -> dict[str, Any] | None:
+        """Find full node info including IP address.
+
+        Args:
+            node_name: The name of the node to find
+            target_remote: Optional remote name to disambiguate if multiple
+                          nodes have the same name across remotes
+
+        Returns:
+            Full node dict if found, None if not found or ambiguous
+        """
+        nodes = await self.get_all_nodes()
+        matching_nodes: list[dict[str, Any]] = []
+
+        for node in nodes:
+            name = node.get("node", node.get("name", ""))
+            if name.lower() == node_name.lower():
+                # If target_remote specified, only match nodes in that remote
+                if target_remote:
+                    if node.get("remote", "").lower() == target_remote.lower():
+                        matching_nodes.append(node)
+                else:
+                    matching_nodes.append(node)
+
+        if not matching_nodes:
+            _LOGGER.warning(
+                "Node '%s' not found%s. Available nodes: %s",
+                node_name,
+                f" in remote '{target_remote}'" if target_remote else "",
+                [f"{n.get('node', n.get('name'))}@{n.get('remote')}" for n in nodes]
+            )
+            return None
+
+        if len(matching_nodes) == 1:
+            node = matching_nodes[0]
+            _LOGGER.debug(
+                "Found node '%s' in remote '%s', full info: %s",
+                node_name, node.get("remote"), node
+            )
+            return node
+
+        # Multiple matches - ambiguous!
+        remotes_with_node = [n.get("remote") for n in matching_nodes]
+        _LOGGER.error(
+            "Ambiguous node name '%s' - found in multiple remotes: %s. "
+            "Please specify 'target_remote' to disambiguate.",
+            node_name, remotes_with_node
         )
         return None
 
