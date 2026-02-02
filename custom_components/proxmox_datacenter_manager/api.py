@@ -516,8 +516,32 @@ class ProxmoxDatacenterManagerAPI:
                 try:
                     nodes_list = await self._request("GET", f"/pve/remotes/{remote_name}/nodes")
                     debug_info[f"remote_{remote_name}_nodes"] = nodes_list
+
+                    # Try to get details for first node (might have IP)
+                    if nodes_list and len(nodes_list) > 0:
+                        first_node = nodes_list[0].get("node")
+                        if first_node:
+                            try:
+                                node_detail = await self._request("GET", f"/pve/remotes/{remote_name}/nodes/{first_node}")
+                                debug_info[f"remote_{remote_name}_node_{first_node}_detail"] = node_detail
+                            except Exception as e:
+                                debug_info[f"remote_{remote_name}_node_{first_node}_detail_error"] = str(e)
+
+                            # Try network config
+                            try:
+                                node_network = await self._request("GET", f"/pve/remotes/{remote_name}/nodes/{first_node}/network")
+                                debug_info[f"remote_{remote_name}_node_{first_node}_network"] = node_network
+                            except Exception as e:
+                                debug_info[f"remote_{remote_name}_node_{first_node}_network_error"] = str(e)
                 except Exception as e:
                     debug_info[f"remote_{remote_name}_nodes_error"] = str(e)
+
+                # Try remotes config endpoint (might have connection IPs)
+                try:
+                    remote_config = await self._request("GET", f"/remotes/{remote_name}")
+                    debug_info[f"remotes_{remote_name}_direct"] = remote_config
+                except Exception as e:
+                    debug_info[f"remotes_{remote_name}_direct_error"] = str(e)
 
         except Exception as e:
             debug_info["remote_exploration_error"] = str(e)
