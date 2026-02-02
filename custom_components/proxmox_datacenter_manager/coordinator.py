@@ -242,15 +242,24 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
             # Check if VM is already on the target node
             effective_remote = target_remote if target_remote else vm.remote
             if vm.node.lower() == target_host.lower() and vm.remote.lower() == effective_remote.lower():
-                error_msg = (
-                    f"VM '{vm.name}' is already on node '{target_host}' "
-                    f"in remote '{vm.remote}'. Migration not needed."
+                _LOGGER.info(
+                    "VM '%s' is already on node '%s' in remote '%s'. Migration skipped.",
+                    vm.name, target_host, vm.remote
                 )
-                _LOGGER.warning(error_msg)
                 self._data.migration_state = MIGRATION_STATE_IDLE
-                self._data.last_migration_error = error_msg
                 self.async_set_updated_data(self._data)
-                raise ValueError(error_msg)
+                # Return a task with "skipped" status instead of raising error
+                return MigrationTask(
+                    upid="",
+                    vm_name=vm.name,
+                    vm_id=vm.vmid,
+                    source_remote=vm.remote,
+                    source_node=vm.node,
+                    target_remote=None,
+                    target_node=target_host,
+                    status="skipped",
+                    progress=100.0,
+                )
 
             # Determine if this is a local or remote migration
             is_remote_migration = target_remote is not None and target_remote != vm.remote
