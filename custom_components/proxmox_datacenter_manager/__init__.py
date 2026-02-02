@@ -49,6 +49,7 @@ SERVICE_MIGRATE_VM_SCHEMA = vol.Schema(
         vol.Required(ATTR_VM_NAME): cv.string,
         vol.Required(ATTR_TARGET_HOST): cv.string,
         vol.Optional(ATTR_TARGET_REMOTE): cv.string,
+        vol.Optional(ATTR_TARGET_ENDPOINT): cv.string,
         vol.Optional(ATTR_ONLINE, default=True): cv.boolean,
         vol.Optional(ATTR_WITH_LOCAL_DISKS, default=False): cv.boolean,
         vol.Optional(ATTR_STORAGE_MAP): dict,  # For remote migrations: {"source": "target"}

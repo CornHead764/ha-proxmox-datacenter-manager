@@ -490,6 +490,38 @@ class ProxmoxDatacenterManagerAPI:
         except Exception as e:
             debug_info["nodes_error"] = str(e)
 
+        # Try to find node IP addresses from various endpoints
+        try:
+            remotes_list = await self.get_remotes()
+            for remote in remotes_list[:2]:  # Limit to first 2 remotes
+                remote_name = remote.get("name", remote.get("id"))
+                if not remote_name:
+                    continue
+
+                # Try remote/config endpoint
+                try:
+                    config = await self._request("GET", f"/pve/remotes/{remote_name}")
+                    debug_info[f"remote_{remote_name}_config"] = config
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_config_error"] = str(e)
+
+                # Try cluster/status endpoint (often has node IPs)
+                try:
+                    cluster_status = await self._request("GET", f"/pve/remotes/{remote_name}/cluster/status")
+                    debug_info[f"remote_{remote_name}_cluster_status"] = cluster_status
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_cluster_status_error"] = str(e)
+
+                # Try nodes endpoint
+                try:
+                    nodes_list = await self._request("GET", f"/pve/remotes/{remote_name}/nodes")
+                    debug_info[f"remote_{remote_name}_nodes"] = nodes_list
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_nodes_error"] = str(e)
+
+        except Exception as e:
+            debug_info["remote_exploration_error"] = str(e)
+
         return debug_info
 
     async def migrate_vm_local(
