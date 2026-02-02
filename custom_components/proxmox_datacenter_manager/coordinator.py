@@ -177,12 +177,21 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
         vm_name: str,
         target_host: str,
         target_remote: str | None = None,
+        target_endpoint: str | None = None,
         online: bool = True,
         with_local_disks: bool = False,
         storage_map: dict[str, str] | None = None,
         bridge_map: dict[str, str] | None = None,
     ) -> MigrationTask:
-        """Migrate a VM to a target host."""
+        """Migrate a VM to a target host.
+
+        If target_remote is not specified, auto-detects which remote the
+        target_host belongs to. This allows users to just specify a node
+        name and have the system figure out if it's local or cross-cluster.
+
+        For cross-cluster migrations, target_endpoint (IP:port) can be specified
+        to direct the VM to a specific node in the target cluster.
+        """
         async with self._migration_lock:
             # Update state to searching
             self._data.migration_state = MIGRATION_STATE_SEARCHING
@@ -197,13 +206,46 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
                 self.async_set_updated_data(self._data)
                 raise ValueError(f"VM '{vm_name}' not found")
 
+            # Auto-detect target remote from target host if not specified
+            if target_remote is None:
+                # First check if there are multiple nodes with the same name
+                matching_nodes = await self.api.find_all_nodes_by_name(target_host)
+
+                if len(matching_nodes) > 1:
+                    # Ambiguous node name - multiple matches across remotes
+                    remotes_with_node = [n.get("remote") for n in matching_nodes]
+                    error_msg = (
+                        f"Ambiguous target_host '{target_host}' - "
+                        f"found in multiple remotes: {remotes_with_node}. "
+                        f"Please specify 'target_remote' to disambiguate."
+                    )
+                    _LOGGER.error(error_msg)
+                    self._data.migration_state = MIGRATION_STATE_FAILED
+                    self._data.last_migration_error = error_msg
+                    self.async_set_updated_data(self._data)
+                    raise ValueError(error_msg)
+
+                if len(matching_nodes) == 1:
+                    target_remote = matching_nodes[0].get("remote")
+                    _LOGGER.info(
+                        "Auto-detected target remote '%s' for node '%s'",
+                        target_remote, target_host
+                    )
+                else:
+                    # Node not found, assume it's in the same remote as the VM
+                    _LOGGER.warning(
+                        "Could not find target node '%s' in any remote, "
+                        "assuming same remote as VM (%s)",
+                        target_host, vm.remote
+                    )
+
             # Determine if this is a local or remote migration
             is_remote_migration = target_remote is not None and target_remote != vm.remote
 
             _LOGGER.info(
-                "Migrating VM %s (id=%d) from %s/%s to %s%s, is_remote=%s",
-                vm.name, vm.vmid, vm.remote, vm.node, target_host,
-                f" on {target_remote}" if target_remote else "",
+                "Migrating VM %s (id=%d) from %s/%s to %s/%s, is_remote=%s",
+                vm.name, vm.vmid, vm.remote, vm.node,
+                target_remote or vm.remote, target_host,
                 is_remote_migration
             )
 
@@ -232,6 +274,7 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
                         vmid=vm.vmid,
                         target_remote=target_remote,
                         target_node=target_host,
+                        target_endpoint=target_endpoint,
                         vm_type=vm.vm_type,
                         online=online,
                         delete_source=True,
@@ -244,6 +287,7 @@ class PDMCoordinator(DataUpdateCoordinator[PDMData]):
                         remote=vm.remote,
                         vmid=vm.vmid,
                         target_node=target_host,
+                        source_node=vm.node,
                         vm_type=vm.vm_type,
                         online=online,
                         with_local_disks=with_local_disks,

@@ -136,9 +136,10 @@ class ProxmoxDatacenterManagerAPI:
         url = f"{self._base_url}{endpoint}"
         headers = self._get_auth_header()
 
-        _LOGGER.debug("PDM API request: %s %s params=%s", method, url, params)
+        _LOGGER.debug("PDM API request: %s %s params=%s data=%s", method, url, params, data)
 
         try:
+            # PDM API expects JSON for POST requests
             async with session.request(
                 method,
                 url,
@@ -414,6 +415,149 @@ class ProxmoxDatacenterManagerAPI:
         except ProxmoxDatacenterManagerError:
             return []
 
+    async def find_node_remote(self, node_name: str) -> str | None:
+        """Find which remote a node belongs to.
+
+        Args:
+            node_name: The name of the node to find
+
+        Returns:
+            The remote name if found, None if not found or ambiguous.
+            For ambiguous cases (same node name in multiple remotes),
+            returns None and logs an error.
+        """
+        node_info = await self.find_node_info(node_name)
+        if node_info:
+            return node_info.get("remote")
+        return None
+
+    async def find_all_nodes_by_name(self, node_name: str) -> list[dict[str, Any]]:
+        """Find all nodes matching a name across all remotes.
+
+        Useful for detecting ambiguous node names and presenting options to users.
+
+        Args:
+            node_name: The name of the node to find
+
+        Returns:
+            List of all matching nodes (may be empty, one, or multiple)
+        """
+        nodes = await self.get_all_nodes()
+        matching_nodes: list[dict[str, Any]] = []
+
+        for node in nodes:
+            name = node.get("node", node.get("name", ""))
+            if name.lower() == node_name.lower():
+                matching_nodes.append(node)
+
+        return matching_nodes
+
+    async def find_node_info(
+        self, node_name: str, target_remote: str | None = None
+    ) -> dict[str, Any] | None:
+        """Find full node info including IP address.
+
+        Args:
+            node_name: The name of the node to find
+            target_remote: Optional remote name to disambiguate if multiple
+                          nodes have the same name across remotes
+
+        Returns:
+            Full node dict if found, None if not found or ambiguous
+        """
+        nodes = await self.get_all_nodes()
+        matching_nodes: list[dict[str, Any]] = []
+
+        for node in nodes:
+            name = node.get("node", node.get("name", ""))
+            if name.lower() == node_name.lower():
+                # If target_remote specified, only match nodes in that remote
+                if target_remote:
+                    if node.get("remote", "").lower() == target_remote.lower():
+                        matching_nodes.append(node)
+                else:
+                    matching_nodes.append(node)
+
+        if not matching_nodes:
+            _LOGGER.warning(
+                "Node '%s' not found%s. Available nodes: %s",
+                node_name,
+                f" in remote '{target_remote}'" if target_remote else "",
+                [f"{n.get('node', n.get('name'))}@{n.get('remote')}" for n in nodes]
+            )
+            return None
+
+        if len(matching_nodes) == 1:
+            node = matching_nodes[0]
+            _LOGGER.debug(
+                "Found node '%s' in remote '%s', full info: %s",
+                node_name, node.get("remote"), node
+            )
+            return node
+
+        # Multiple matches - ambiguous!
+        remotes_with_node = [n.get("remote") for n in matching_nodes]
+        _LOGGER.error(
+            "Ambiguous node name '%s' - found in multiple remotes: %s. "
+            "Please specify 'target_remote' to disambiguate.",
+            node_name, remotes_with_node
+        )
+        return None
+
+    async def get_node_ip(self, remote: str, node_name: str) -> str | None:
+        """Get the management IP address for a node.
+
+        Queries the node's network configuration and finds the interface
+        with a gateway (management interface).
+
+        Args:
+            remote: The remote/cluster name
+            node_name: The node name
+
+        Returns:
+            The management IP address if found, None otherwise
+        """
+        try:
+            network = await self._request(
+                "GET", f"/pve/remotes/{remote}/nodes/{node_name}/network"
+            )
+
+            if not isinstance(network, list):
+                _LOGGER.debug("Node %s network config not a list: %s", node_name, type(network))
+                return None
+
+            # Find interface with gateway (management interface)
+            for iface in network:
+                if not isinstance(iface, dict):
+                    continue
+                # Interface with gateway is typically the management interface
+                if iface.get("gateway") and iface.get("address"):
+                    ip = iface.get("address")
+                    _LOGGER.info(
+                        "Found management IP %s for node %s (interface: %s)",
+                        ip, node_name, iface.get("iface")
+                    )
+                    return ip
+
+            # Fallback: find any interface with an address (prefer bridges)
+            for iface in network:
+                if not isinstance(iface, dict):
+                    continue
+                if iface.get("address") and iface.get("type") == "bridge":
+                    ip = iface.get("address")
+                    _LOGGER.info(
+                        "Found IP %s for node %s (bridge interface: %s)",
+                        ip, node_name, iface.get("iface")
+                    )
+                    return ip
+
+            _LOGGER.warning("No IP address found for node %s", node_name)
+            return None
+
+        except ProxmoxDatacenterManagerError as err:
+            _LOGGER.warning("Failed to get network config for node %s: %s", node_name, err)
+            return None
+
     async def debug_api_structure(self) -> dict[str, Any]:
         """Debug helper to inspect API structure."""
         debug_info: dict[str, Any] = {}
@@ -441,6 +585,85 @@ class ProxmoxDatacenterManagerAPI:
         except Exception as e:
             debug_info["resources_error"] = str(e)
 
+        try:
+            # Get all nodes with their fields (helpful for finding IP address field)
+            nodes = await self.get_all_nodes()
+            debug_info["nodes"] = nodes
+            if nodes:
+                debug_info["node_fields"] = list(nodes[0].keys()) if nodes else []
+        except Exception as e:
+            debug_info["nodes_error"] = str(e)
+
+        # Try to find node IP addresses from various endpoints
+        try:
+            remotes_list = await self.get_remotes()
+            for remote in remotes_list[:2]:  # Limit to first 2 remotes
+                remote_name = remote.get("name", remote.get("id"))
+                if not remote_name:
+                    continue
+
+                # Try remote/config endpoint
+                try:
+                    config = await self._request("GET", f"/pve/remotes/{remote_name}")
+                    debug_info[f"remote_{remote_name}_config"] = config
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_config_error"] = str(e)
+
+                # Try cluster/status endpoint (often has node IPs)
+                try:
+                    cluster_status = await self._request("GET", f"/pve/remotes/{remote_name}/cluster/status")
+                    debug_info[f"remote_{remote_name}_cluster_status"] = cluster_status
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_cluster_status_error"] = str(e)
+
+                # Try nodes endpoint
+                try:
+                    nodes_list = await self._request("GET", f"/pve/remotes/{remote_name}/nodes")
+                    debug_info[f"remote_{remote_name}_nodes"] = nodes_list
+
+                    # Try to get details for first node (might have IP)
+                    if nodes_list and len(nodes_list) > 0:
+                        first_node = nodes_list[0].get("node")
+                        if first_node:
+                            try:
+                                node_detail = await self._request("GET", f"/pve/remotes/{remote_name}/nodes/{first_node}")
+                                debug_info[f"remote_{remote_name}_node_{first_node}_detail"] = node_detail
+                            except Exception as e:
+                                debug_info[f"remote_{remote_name}_node_{first_node}_detail_error"] = str(e)
+
+                            # Try network config
+                            try:
+                                node_network = await self._request("GET", f"/pve/remotes/{remote_name}/nodes/{first_node}/network")
+                                debug_info[f"remote_{remote_name}_node_{first_node}_network"] = node_network
+                            except Exception as e:
+                                debug_info[f"remote_{remote_name}_node_{first_node}_network_error"] = str(e)
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_nodes_error"] = str(e)
+
+                # Try remotes config endpoint (might have connection IPs)
+                try:
+                    remote_config = await self._request("GET", f"/remotes/{remote_name}")
+                    debug_info[f"remotes_{remote_name}_direct"] = remote_config
+                except Exception as e:
+                    debug_info[f"remotes_{remote_name}_direct_error"] = str(e)
+
+                # Try to get remote configuration/options (might have endpoints)
+                try:
+                    remote_options = await self._request("GET", f"/pve/remotes/{remote_name}/options")
+                    debug_info[f"remote_{remote_name}_options"] = remote_options
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_options_error"] = str(e)
+
+                # Try remotes/remote endpoint
+                try:
+                    remotes_remote = await self._request("GET", f"/remotes/remote/{remote_name}")
+                    debug_info[f"remotes_remote_{remote_name}"] = remotes_remote
+                except Exception as e:
+                    debug_info[f"remotes_remote_{remote_name}_error"] = str(e)
+
+        except Exception as e:
+            debug_info["remote_exploration_error"] = str(e)
+
         return debug_info
 
     async def migrate_vm_local(
@@ -448,11 +671,22 @@ class ProxmoxDatacenterManagerAPI:
         remote: str,
         vmid: int,
         target_node: str,
+        source_node: str | None = None,
         vm_type: str = RESOURCE_TYPE_QEMU,
         online: bool = True,
         with_local_disks: bool = False,
     ) -> str:
-        """Migrate a VM within the same cluster (local migration)."""
+        """Migrate a VM within the same cluster (local migration).
+
+        Args:
+            remote: The remote/cluster name
+            vmid: The VM ID
+            target_node: The destination node name
+            source_node: The source node name (optional, PDM can auto-detect)
+            vm_type: The VM type (pve-qemu or pve-lxc)
+            online: Perform live migration if VM is running
+            with_local_disks: Enable live storage migration for local disks
+        """
         # Strip 'pve-' prefix for API endpoint
         api_vm_type = _strip_pve_prefix(vm_type)
         endpoint = f"/pve/remotes/{remote}/{api_vm_type}/{vmid}/migrate"
@@ -461,6 +695,10 @@ class ProxmoxDatacenterManagerAPI:
         data: dict[str, Any] = {
             "target": target_node,
         }
+
+        # Include source node if provided (helps PDM locate the VM)
+        if source_node:
+            data["node"] = source_node
 
         # Only include optional boolean parameters if True
         if online:
@@ -478,7 +716,8 @@ class ProxmoxDatacenterManagerAPI:
         source_remote: str,
         vmid: int,
         target_remote: str,
-        target_node: str,
+        target_node: str | None = None,
+        target_endpoint: str | None = None,
         vm_type: str = RESOURCE_TYPE_QEMU,
         online: bool = True,
         delete_source: bool = True,
@@ -487,8 +726,17 @@ class ProxmoxDatacenterManagerAPI:
     ) -> str:
         """Migrate a VM between different clusters (remote migration).
 
-        Note: For remote migration, target_node is included in target-endpoint
-        if needed. The 'target' parameter is the remote name.
+        Args:
+            source_remote: The source remote/cluster name
+            vmid: The VM ID
+            target_remote: The destination remote/cluster name
+            target_node: The target node name (for logging)
+            target_endpoint: IP:port of target node (e.g., '192.168.1.100:8006')
+            vm_type: The VM type (pve-qemu or pve-lxc)
+            online: Perform live migration if VM is running
+            delete_source: Delete VM from source after migration
+            storage_map: Storage name mappings (source:target)
+            bridge_map: Bridge name mappings (source:target)
         """
         # Strip 'pve-' prefix for API endpoint
         api_vm_type = _strip_pve_prefix(vm_type)
@@ -511,6 +759,7 @@ class ProxmoxDatacenterManagerAPI:
             # Default: same bridge name on target
             bridge_mappings = ["vmbr0:vmbr0"]
 
+        # Build the data payload
         data: dict[str, Any] = {
             "target": target_remote,
             "target-storage": storage_mappings,
@@ -519,6 +768,36 @@ class ProxmoxDatacenterManagerAPI:
             "online": online,
         }
 
+        # Determine target-endpoint for specific node targeting
+        endpoint_ip = target_endpoint
+        if not endpoint_ip and target_node:
+            # Auto-lookup node IP from network configuration
+            node_ip = await self.get_node_ip(target_remote, target_node)
+            if node_ip:
+                endpoint_ip = node_ip  # Just IP, no port
+                _LOGGER.info(
+                    "Cross-cluster migration: auto-detected IP %s for node '%s'",
+                    node_ip, target_node
+                )
+
+        if endpoint_ip:
+            # Don't add port - PDM GUI shows just IP without port
+            data["target-endpoint"] = endpoint_ip.split(":")[0] if ":" in endpoint_ip else endpoint_ip
+            _LOGGER.info(
+                "Cross-cluster migration: using target-endpoint '%s' for node '%s'",
+                data["target-endpoint"], target_node or "unspecified"
+            )
+        elif target_node:
+            _LOGGER.warning(
+                "Cross-cluster migration: could not determine IP for node '%s'. "
+                "PDM will auto-select a node in remote '%s'.",
+                target_node, target_remote
+            )
+
+        _LOGGER.info(
+            "migrate_vm_remote: VM %d from %s to %s",
+            vmid, source_remote, target_remote
+        )
         _LOGGER.debug("migrate_vm_remote: endpoint=%s, data=%s", endpoint, data)
         result = await self._request("POST", endpoint, data=data)
         return result.get("data", result) if isinstance(result, dict) else result

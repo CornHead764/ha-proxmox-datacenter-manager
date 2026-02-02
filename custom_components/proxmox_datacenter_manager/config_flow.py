@@ -9,7 +9,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -22,8 +22,14 @@ from .api import (
 from .const import (
     CONF_API_TOKEN_ID,
     CONF_API_TOKEN_SECRET,
+    CONF_NODE_SENSORS,
+    CONF_VM_FILTER,
+    CONF_VM_SENSORS,
+    DEFAULT_NODE_SENSORS,
     DEFAULT_PORT,
     DEFAULT_VERIFY_SSL,
+    DEFAULT_VM_FILTER,
+    DEFAULT_VM_SENSORS,
     DOMAIN,
 )
 
@@ -60,6 +66,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Proxmox Datacenter Manager."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -147,6 +161,43 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=data_schema,
             errors=errors,
+        )
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for Proxmox Datacenter Manager."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        options = self.config_entry.options
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_NODE_SENSORS,
+                        default=options.get(CONF_NODE_SENSORS, DEFAULT_NODE_SENSORS),
+                    ): bool,
+                    vol.Optional(
+                        CONF_VM_SENSORS,
+                        default=options.get(CONF_VM_SENSORS, DEFAULT_VM_SENSORS),
+                    ): bool,
+                    vol.Optional(
+                        CONF_VM_FILTER,
+                        default=options.get(CONF_VM_FILTER, DEFAULT_VM_FILTER),
+                    ): str,
+                }
+            ),
         )
 
 

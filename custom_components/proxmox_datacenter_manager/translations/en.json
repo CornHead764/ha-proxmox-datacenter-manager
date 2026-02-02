@@ -38,6 +38,24 @@
       "reauth_successful": "Re-authentication successful"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sensor Configuration",
+        "description": "Configure which sensors to create. Note: Enabling VM sensors may create many entities.",
+        "data": {
+          "node_sensors": "Create sensors for each node",
+          "vm_sensors": "Create sensors for VMs",
+          "vm_filter": "VM filter regex"
+        },
+        "data_description": {
+          "node_sensors": "Create CPU and memory sensors for each Proxmox node",
+          "vm_sensors": "Create status sensors for virtual machines (may create many entities)",
+          "vm_filter": "Regular expression to filter VMs by name (e.g., 'prod-.*' or '(web|db)-.*'). Leave empty for all VMs."
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "migration_state": {
