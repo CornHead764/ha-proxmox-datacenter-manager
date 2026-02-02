@@ -166,8 +166,23 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
                 storage_map=storage_map,
                 bridge_map=bridge_map,
             )
+
+            # Determine status based on task state
+            if task.status == "skipped":
+                return {
+                    "success": True,
+                    "status": "skipped",
+                    "message": f"VM '{task.vm_name}' is already on node '{task.target_node}'",
+                    "vm_name": task.vm_name,
+                    "vm_id": task.vm_id,
+                    "node": task.source_node,
+                    "remote": task.source_remote,
+                }
+
+            # Migration started successfully
             return {
                 "success": True,
+                "status": "migrating",
                 "upid": task.upid,
                 "vm_name": task.vm_name,
                 "vm_id": task.vm_id,
@@ -177,9 +192,9 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
                 "target_remote": task.target_remote,
             }
         except ValueError as err:
-            return {"success": False, "error": str(err)}
+            return {"success": False, "status": "error", "error": str(err)}
         except ProxmoxDatacenterManagerError as err:
-            return {"success": False, "error": str(err)}
+            return {"success": False, "status": "error", "error": str(err)}
 
     async def handle_start_vm(call: ServiceCall) -> dict[str, Any]:
         """Handle the start_vm service call."""
