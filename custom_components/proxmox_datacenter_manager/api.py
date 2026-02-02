@@ -597,6 +597,20 @@ class ProxmoxDatacenterManagerAPI:
                 except Exception as e:
                     debug_info[f"remotes_{remote_name}_direct_error"] = str(e)
 
+                # Try to get remote configuration/options (might have endpoints)
+                try:
+                    remote_options = await self._request("GET", f"/pve/remotes/{remote_name}/options")
+                    debug_info[f"remote_{remote_name}_options"] = remote_options
+                except Exception as e:
+                    debug_info[f"remote_{remote_name}_options_error"] = str(e)
+
+                # Try remotes/remote endpoint
+                try:
+                    remotes_remote = await self._request("GET", f"/remotes/remote/{remote_name}")
+                    debug_info[f"remotes_remote_{remote_name}"] = remotes_remote
+                except Exception as e:
+                    debug_info[f"remotes_remote_{remote_name}_error"] = str(e)
+
         except Exception as e:
             debug_info["remote_exploration_error"] = str(e)
 
@@ -710,20 +724,18 @@ class ProxmoxDatacenterManagerAPI:
             # Auto-lookup node IP from network configuration
             node_ip = await self.get_node_ip(target_remote, target_node)
             if node_ip:
-                endpoint_ip = f"{node_ip}:8006"
+                endpoint_ip = node_ip  # Just IP, no port
                 _LOGGER.info(
                     "Cross-cluster migration: auto-detected IP %s for node '%s'",
                     node_ip, target_node
                 )
 
         if endpoint_ip:
-            # Ensure format includes port
-            if ":" not in endpoint_ip:
-                endpoint_ip = f"{endpoint_ip}:8006"
-            data["target-endpoint"] = endpoint_ip
+            # Don't add port - PDM GUI shows just IP without port
+            data["target-endpoint"] = endpoint_ip.split(":")[0] if ":" in endpoint_ip else endpoint_ip
             _LOGGER.info(
                 "Cross-cluster migration: using target-endpoint '%s' for node '%s'",
-                endpoint_ip, target_node or "unspecified"
+                data["target-endpoint"], target_node or "unspecified"
             )
         elif target_node:
             _LOGGER.warning(
