@@ -7,9 +7,16 @@ A Home Assistant custom integration for [Proxmox Datacenter Manager (PDM)](https
 ## Features
 
 - **Live VM Migration**: Migrate VMs between nodes within a cluster or across different clusters
+  - Auto-detects target cluster from node name (just specify `target_host`)
+  - Auto-detects node IP for cross-cluster migrations
+  - Validates for duplicate node names across remotes
+  - Prevents migration to same node VM is already on
 - **VM Power Control**: Start, stop, and shutdown VMs by name
 - **Resource Monitoring**: Track VMs, nodes, and remotes across your infrastructure
+  - CPU and memory sensors for nodes
+  - CPU and memory sensors for VMs (with optional regex filter)
 - **Migration Status Sensor**: Real-time tracking of migration progress
+- **Configurable Options**: Filter which VM sensors are created using regex patterns
 - **Easy Setup**: Configure via Home Assistant's web UI with API token authentication
 
 ## Requirements
@@ -114,34 +121,42 @@ If you prefer minimal permissions:
 
 ### `proxmox_datacenter_manager.migrate_vm`
 
-Migrate a VM to a target host.
+Migrate a VM to a target host. The integration automatically detects whether this is a local (same cluster) or remote (cross-cluster) migration based on where the target node is located.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `vm_name` | Yes | Name of the VM to migrate |
+| `vm_name` | Yes | Name or VMID of the VM to migrate |
 | `target_host` | Yes | Target node name |
-| `target_remote` | No | Target cluster (for cross-cluster migration) |
+| `target_remote` | No | Target cluster (only needed if node name exists in multiple remotes) |
 | `online` | No | Live migration (default: true) |
-| `with_local_disks` | No | Include local disks (default: false) |
+| `with_local_disks` | No | Include local disks for local migrations (default: false) |
 
-**Example:**
+**Simple migration (auto-detects everything):**
 ```yaml
 service: proxmox_datacenter_manager.migrate_vm
 data:
   vm_name: "my-vm"
   target_host: "pve-node2"
-  online: true
 ```
 
-**Cross-cluster migration:**
+The integration will:
+1. Find the VM across all remotes
+2. Find which remote `pve-node2` belongs to
+3. Automatically determine if it's a local or cross-cluster migration
+4. For cross-cluster migrations, auto-detect the target node's IP address
+
+**Explicit cross-cluster migration** (required if node names are duplicated across remotes):
 ```yaml
 service: proxmox_datacenter_manager.migrate_vm
 data:
   vm_name: "my-vm"
   target_host: "pve-node1"
   target_remote: "datacenter2"
-  online: true
 ```
+
+**Validation:**
+- If `target_host` exists in multiple remotes, you must specify `target_remote` to disambiguate
+- Migration to the same node the VM is already on will fail with a helpful error message
 
 ### `proxmox_datacenter_manager.start_vm`
 
@@ -216,12 +231,34 @@ response_variable: debug_info
 
 The integration creates the following sensors:
 
+### Summary Sensors
+
 | Sensor | Description |
 |--------|-------------|
 | `sensor.pdm_*_migration_state` | Current migration state (idle/searching/migrating/completed/failed) |
 | `sensor.pdm_*_total_vms` | Total number of VMs across all remotes |
 | `sensor.pdm_*_total_nodes` | Total number of nodes across all remotes |
 | `sensor.pdm_*_total_remotes` | Number of configured remotes |
+
+### Node Sensors
+
+For each node in your infrastructure:
+
+| Sensor | Description |
+|--------|-------------|
+| `sensor.pdm_*_node_*_cpu` | Node CPU usage percentage |
+| `sensor.pdm_*_node_*_memory` | Node memory usage percentage |
+
+### VM Sensors (Optional)
+
+For each VM matching your filter pattern:
+
+| Sensor | Description |
+|--------|-------------|
+| `sensor.pdm_*_vm_*_cpu` | VM CPU usage percentage |
+| `sensor.pdm_*_vm_*_memory` | VM memory usage percentage |
+
+VM sensors are controlled by the **VM Filter Regex** option (see Options below).
 
 ### Migration State Sensor Attributes
 
@@ -235,6 +272,21 @@ When a migration is active, the sensor includes:
 - `task_status`: Current task status
 - `progress`: Migration progress percentage
 - `error`: Error message (if failed)
+
+## Options
+
+After initial setup, you can configure additional options by clicking "Configure" on the integration:
+
+| Option | Description |
+|--------|-------------|
+| **Enable Node Sensors** | Create CPU/memory sensors for each node (default: enabled) |
+| **Enable VM Sensors** | Create CPU/memory sensors for VMs (default: disabled) |
+| **VM Filter Regex** | Only create sensors for VMs matching this pattern (e.g., `^prod-.*` for VMs starting with "prod-") |
+
+To access options:
+1. Go to Settings → Devices & Services
+2. Find "Proxmox Datacenter Manager"
+3. Click "Configure"
 
 ## Automation Examples
 
@@ -333,6 +385,12 @@ When `migrate_vm` or other services return "VM not found":
 - Verify the token's user has appropriate permissions
 
 ### Migration fails
+
+- **"VM is already on node X"**: The VM is already on the target node. No migration needed.
+
+- **"Ambiguous target_host - found in multiple remotes"**: The target node name exists in more than one remote. Specify `target_remote` to indicate which cluster you want to migrate to.
+
+- **"refusing migration to the same node"**: The PDM API rejected the migration because source and target are the same.
 
 - Verify the target node has sufficient resources (CPU, RAM, storage)
 - Check network connectivity between nodes
