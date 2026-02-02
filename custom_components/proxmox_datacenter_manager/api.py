@@ -454,6 +454,60 @@ class ProxmoxDatacenterManagerAPI:
         )
         return None
 
+    async def get_node_ip(self, remote: str, node_name: str) -> str | None:
+        """Get the management IP address for a node.
+
+        Queries the node's network configuration and finds the interface
+        with a gateway (management interface).
+
+        Args:
+            remote: The remote/cluster name
+            node_name: The node name
+
+        Returns:
+            The management IP address if found, None otherwise
+        """
+        try:
+            network = await self._request(
+                "GET", f"/pve/remotes/{remote}/nodes/{node_name}/network"
+            )
+
+            if not isinstance(network, list):
+                _LOGGER.debug("Node %s network config not a list: %s", node_name, type(network))
+                return None
+
+            # Find interface with gateway (management interface)
+            for iface in network:
+                if not isinstance(iface, dict):
+                    continue
+                # Interface with gateway is typically the management interface
+                if iface.get("gateway") and iface.get("address"):
+                    ip = iface.get("address")
+                    _LOGGER.info(
+                        "Found management IP %s for node %s (interface: %s)",
+                        ip, node_name, iface.get("iface")
+                    )
+                    return ip
+
+            # Fallback: find any interface with an address (prefer bridges)
+            for iface in network:
+                if not isinstance(iface, dict):
+                    continue
+                if iface.get("address") and iface.get("type") == "bridge":
+                    ip = iface.get("address")
+                    _LOGGER.info(
+                        "Found IP %s for node %s (bridge interface: %s)",
+                        ip, node_name, iface.get("iface")
+                    )
+                    return ip
+
+            _LOGGER.warning("No IP address found for node %s", node_name)
+            return None
+
+        except ProxmoxDatacenterManagerError as err:
+            _LOGGER.warning("Failed to get network config for node %s: %s", node_name, err)
+            return None
+
     async def debug_api_structure(self) -> dict[str, Any]:
         """Debug helper to inspect API structure."""
         debug_info: dict[str, Any] = {}
@@ -650,19 +704,30 @@ class ProxmoxDatacenterManagerAPI:
             "online": online,
         }
 
-        # Use target_endpoint if provided (IP:port format from PDM GUI)
-        if target_endpoint:
+        # Determine target-endpoint for specific node targeting
+        endpoint_ip = target_endpoint
+        if not endpoint_ip and target_node:
+            # Auto-lookup node IP from network configuration
+            node_ip = await self.get_node_ip(target_remote, target_node)
+            if node_ip:
+                endpoint_ip = f"{node_ip}:8006"
+                _LOGGER.info(
+                    "Cross-cluster migration: auto-detected IP %s for node '%s'",
+                    node_ip, target_node
+                )
+
+        if endpoint_ip:
             # Ensure format includes port
-            if ":" not in target_endpoint:
-                target_endpoint = f"{target_endpoint}:8006"
-            data["target-endpoint"] = target_endpoint
+            if ":" not in endpoint_ip:
+                endpoint_ip = f"{endpoint_ip}:8006"
+            data["target-endpoint"] = endpoint_ip
             _LOGGER.info(
                 "Cross-cluster migration: using target-endpoint '%s' for node '%s'",
-                target_endpoint, target_node or "unspecified"
+                endpoint_ip, target_node or "unspecified"
             )
         elif target_node:
-            _LOGGER.info(
-                "Cross-cluster migration: no target_endpoint specified for node '%s'. "
+            _LOGGER.warning(
+                "Cross-cluster migration: could not determine IP for node '%s'. "
                 "PDM will auto-select a node in remote '%s'.",
                 target_node, target_remote
             )
