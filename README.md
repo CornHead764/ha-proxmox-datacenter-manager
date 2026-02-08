@@ -12,6 +12,7 @@ A Home Assistant custom integration for [Proxmox Datacenter Manager (PDM)](https
   - Validates for duplicate node names across remotes
   - Prevents migration to same node VM is already on
 - **VM Power Control**: Start, stop, and shutdown VMs by name
+- **Bulk Shutdown Actions**: Shutdown all VMs on a host or remote, shutdown individual hosts, or shutdown all hosts in a remote (gracefully skips offline nodes)
 - **Resource Monitoring**: Track VMs, nodes, and remotes across your infrastructure
   - CPU and memory sensors for nodes
   - CPU and memory sensors for VMs (with optional regex filter)
@@ -62,6 +63,7 @@ PDM uses role-based access control. Here are the privileges needed for each feat
 | **Start/Stop/Shutdown VMs** | `Resource.Manage` | `/resource/{remote}/guest/{vmid}` |
 | **Migrate VMs (local)** | `Resource.Migrate` | `/resource/{remote}/guest/{vmid}` |
 | **Migrate VMs (cross-cluster)** | `Resource.Migrate` | Both source and target paths |
+| **Shutdown hosts** | `Sys.PowerMgmt` | `/nodes/{node}` |
 | **View system info** | `System.Audit` | `/` |
 
 #### Recommended Setup: Administrator Role
@@ -188,6 +190,104 @@ data:
   vm_name: "my-vm"
 ```
 
+### `proxmox_datacenter_manager.shutdown_host_vms`
+
+Gracefully shutdown all running VMs on a specific host.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `host_name` | Yes | Name of the Proxmox host/node |
+| `remote_name` | No | Remote/cluster name (only needed if host name exists in multiple remotes) |
+
+```yaml
+service: proxmox_datacenter_manager.shutdown_host_vms
+data:
+  host_name: "pve-node1"
+```
+
+Returns a detailed response with per-VM results:
+```yaml
+success: true
+host: "pve-node1"
+remote: "my-cluster"
+total: 3
+succeeded: 3
+failed: 0
+vms_shutdown:
+  - vm_name: "web-server"
+    vm_id: 100
+    success: true
+    upid: "UPID:..."
+```
+
+### `proxmox_datacenter_manager.shutdown_remote_vms`
+
+Gracefully shutdown all running VMs across an entire remote/cluster.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `remote_name` | Yes | Remote/cluster name |
+
+```yaml
+service: proxmox_datacenter_manager.shutdown_remote_vms
+data:
+  remote_name: "my-cluster"
+```
+
+Returns per-VM results including which node each VM was on.
+
+### `proxmox_datacenter_manager.shutdown_host`
+
+Shutdown a Proxmox host/node.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `host_name` | Yes | Name of the Proxmox host/node |
+| `remote_name` | No | Remote/cluster name (only needed if host name exists in multiple remotes) |
+
+```yaml
+service: proxmox_datacenter_manager.shutdown_host
+data:
+  host_name: "pve-node1"
+```
+
+### `proxmox_datacenter_manager.shutdown_all_hosts`
+
+Shutdown all hosts in a remote/cluster. Gracefully skips hosts that are already offline -- for example, a 3-node cluster with 1 node already off will only attempt to shutdown the 2 that are on.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `remote_name` | Yes | Remote/cluster name |
+
+```yaml
+service: proxmox_datacenter_manager.shutdown_all_hosts
+data:
+  remote_name: "my-cluster"
+```
+
+Returns a detailed response showing which hosts were shut down, skipped, or failed:
+```yaml
+success: true
+remote: "my-cluster"
+total: 3
+shutdown: 2
+skipped: 1
+failed: 0
+hosts_shutdown:
+  - host: "pve-node1"
+    success: true
+    skipped: false
+    upid: "UPID:..."
+  - host: "pve-node2"
+    success: true
+    skipped: false
+    upid: "UPID:..."
+  - host: "pve-node3"
+    success: true
+    skipped: true
+    reason: "Already offline"
+```
+
 ### `proxmox_datacenter_manager.reset_migration_state`
 
 Reset the migration state sensor to idle.
@@ -306,6 +406,30 @@ automation:
         data:
           vm_name: "heavy-workload-vm"
           target_host: "pve-node2"
+```
+
+### Graceful cluster shutdown
+
+Shutdown all VMs first, then all hosts in a cluster:
+
+```yaml
+automation:
+  - alias: "Graceful cluster shutdown"
+    trigger:
+      - platform: event
+        event_type: call_service
+        event_data:
+          domain: input_button
+          service: press
+    action:
+      - service: proxmox_datacenter_manager.shutdown_remote_vms
+        data:
+          remote_name: "my-cluster"
+      - delay:
+          minutes: 5
+      - service: proxmox_datacenter_manager.shutdown_all_hosts
+        data:
+          remote_name: "my-cluster"
 ```
 
 ### Notify on migration completion
