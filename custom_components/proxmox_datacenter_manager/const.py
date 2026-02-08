@@ -39,6 +39,10 @@ MIGRATION_STATE_FAILED = "failed"
 
 # Service names
 SERVICE_MIGRATE_VM = "migrate_vm"
+SERVICE_SHUTDOWN_HOST_VMS = "shutdown_host_vms"
+SERVICE_SHUTDOWN_REMOTE_VMS = "shutdown_remote_vms"
+SERVICE_SHUTDOWN_HOST = "shutdown_host"
+SERVICE_SHUTDOWN_ALL_HOSTS = "shutdown_all_hosts"
 
 # Attributes
 ATTR_VM_NAME = "vm_name"
@@ -49,6 +53,8 @@ ATTR_ONLINE = "online"
 ATTR_WITH_LOCAL_DISKS = "with_local_disks"
 ATTR_STORAGE_MAP = "storage_map"
 ATTR_BRIDGE_MAP = "bridge_map"
+ATTR_HOST_NAME = "host_name"
+ATTR_REMOTE_NAME = "remote_name"
 
 # Update intervals
 SCAN_INTERVAL_SECONDS = 30

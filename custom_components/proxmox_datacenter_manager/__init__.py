@@ -22,7 +22,9 @@ from .api import (
 )
 from .const import (
     ATTR_BRIDGE_MAP,
+    ATTR_HOST_NAME,
     ATTR_ONLINE,
+    ATTR_REMOTE_NAME,
     ATTR_STORAGE_MAP,
     ATTR_TARGET_ENDPOINT,
     ATTR_TARGET_HOST,
@@ -36,6 +38,10 @@ from .const import (
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     SERVICE_MIGRATE_VM,
+    SERVICE_SHUTDOWN_ALL_HOSTS,
+    SERVICE_SHUTDOWN_HOST,
+    SERVICE_SHUTDOWN_HOST_VMS,
+    SERVICE_SHUTDOWN_REMOTE_VMS,
 )
 from .coordinator import PDMCoordinator
 
@@ -60,6 +66,19 @@ SERVICE_MIGRATE_VM_SCHEMA = vol.Schema(
 SERVICE_VM_NAME_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_VM_NAME): cv.string,
+    }
+)
+
+SERVICE_HOST_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_HOST_NAME): cv.string,
+        vol.Optional(ATTR_REMOTE_NAME): cv.string,
+    }
+)
+
+SERVICE_REMOTE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_REMOTE_NAME): cv.string,
     }
 )
 
@@ -262,6 +281,272 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
         except ProxmoxDatacenterManagerError as err:
             return {"success": False, "error": str(err)}
 
+    async def handle_shutdown_host_vms(call: ServiceCall) -> dict[str, Any]:
+        """Handle the shutdown_host_vms service call."""
+        coordinator = await get_coordinator()
+        if not coordinator:
+            raise ValueError("No Proxmox Datacenter Manager instance configured")
+
+        host_name = call.data[ATTR_HOST_NAME]
+        remote_name = call.data.get(ATTR_REMOTE_NAME)
+
+        try:
+            # Resolve the host to a specific remote if not provided
+            if remote_name is None:
+                matching_nodes = await coordinator.api.find_all_nodes_by_name(host_name)
+                if len(matching_nodes) == 0:
+                    return {"success": False, "error": f"Host '{host_name}' not found"}
+                if len(matching_nodes) > 1:
+                    remotes = [n.get("remote") for n in matching_nodes]
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Ambiguous host '{host_name}' found in multiple remotes: "
+                            f"{remotes}. Please specify 'remote_name'."
+                        ),
+                    }
+                remote_name = matching_nodes[0].get("remote")
+
+            # Find all running VMs on this host
+            await coordinator.async_refresh()
+            running_vms = [
+                vm for vm in coordinator.data.vms
+                if vm.node.lower() == host_name.lower()
+                and (remote_name is None or vm.remote.lower() == remote_name.lower())
+                and vm.status == "running"
+            ]
+
+            if not running_vms:
+                return {
+                    "success": True,
+                    "message": f"No running VMs found on host '{host_name}'",
+                    "host": host_name,
+                    "remote": remote_name,
+                    "vms_shutdown": [],
+                }
+
+            results = []
+            for vm in running_vms:
+                try:
+                    upid = await coordinator.api.shutdown_vm(
+                        remote=vm.remote,
+                        vmid=vm.vmid,
+                        vm_type=vm.vm_type,
+                    )
+                    results.append({
+                        "vm_name": vm.name,
+                        "vm_id": vm.vmid,
+                        "success": True,
+                        "upid": upid,
+                    })
+                except ProxmoxDatacenterManagerError as err:
+                    results.append({
+                        "vm_name": vm.name,
+                        "vm_id": vm.vmid,
+                        "success": False,
+                        "error": str(err),
+                    })
+
+            return {
+                "success": True,
+                "host": host_name,
+                "remote": remote_name,
+                "vms_shutdown": results,
+                "total": len(results),
+                "succeeded": sum(1 for r in results if r["success"]),
+                "failed": sum(1 for r in results if not r["success"]),
+            }
+        except ProxmoxDatacenterManagerError as err:
+            return {"success": False, "error": str(err)}
+
+    async def handle_shutdown_remote_vms(call: ServiceCall) -> dict[str, Any]:
+        """Handle the shutdown_remote_vms service call."""
+        coordinator = await get_coordinator()
+        if not coordinator:
+            raise ValueError("No Proxmox Datacenter Manager instance configured")
+
+        remote_name = call.data[ATTR_REMOTE_NAME]
+
+        try:
+            # Verify remote exists
+            remotes = await coordinator.api.get_remotes()
+            remote_names = [r.get("name", r.get("id", "")) for r in remotes]
+            if remote_name not in remote_names:
+                return {
+                    "success": False,
+                    "error": f"Remote '{remote_name}' not found. Available: {remote_names}",
+                }
+
+            # Find all running VMs on this remote
+            await coordinator.async_refresh()
+            running_vms = [
+                vm for vm in coordinator.data.vms
+                if vm.remote.lower() == remote_name.lower()
+                and vm.status == "running"
+            ]
+
+            if not running_vms:
+                return {
+                    "success": True,
+                    "message": f"No running VMs found on remote '{remote_name}'",
+                    "remote": remote_name,
+                    "vms_shutdown": [],
+                }
+
+            results = []
+            for vm in running_vms:
+                try:
+                    upid = await coordinator.api.shutdown_vm(
+                        remote=vm.remote,
+                        vmid=vm.vmid,
+                        vm_type=vm.vm_type,
+                    )
+                    results.append({
+                        "vm_name": vm.name,
+                        "vm_id": vm.vmid,
+                        "node": vm.node,
+                        "success": True,
+                        "upid": upid,
+                    })
+                except ProxmoxDatacenterManagerError as err:
+                    results.append({
+                        "vm_name": vm.name,
+                        "vm_id": vm.vmid,
+                        "node": vm.node,
+                        "success": False,
+                        "error": str(err),
+                    })
+
+            return {
+                "success": True,
+                "remote": remote_name,
+                "vms_shutdown": results,
+                "total": len(results),
+                "succeeded": sum(1 for r in results if r["success"]),
+                "failed": sum(1 for r in results if not r["success"]),
+            }
+        except ProxmoxDatacenterManagerError as err:
+            return {"success": False, "error": str(err)}
+
+    async def handle_shutdown_host(call: ServiceCall) -> dict[str, Any]:
+        """Handle the shutdown_host service call."""
+        coordinator = await get_coordinator()
+        if not coordinator:
+            raise ValueError("No Proxmox Datacenter Manager instance configured")
+
+        host_name = call.data[ATTR_HOST_NAME]
+        remote_name = call.data.get(ATTR_REMOTE_NAME)
+
+        try:
+            # Resolve the host to a specific remote if not provided
+            if remote_name is None:
+                matching_nodes = await coordinator.api.find_all_nodes_by_name(host_name)
+                if len(matching_nodes) == 0:
+                    return {"success": False, "error": f"Host '{host_name}' not found"}
+                if len(matching_nodes) > 1:
+                    remotes = [n.get("remote") for n in matching_nodes]
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Ambiguous host '{host_name}' found in multiple remotes: "
+                            f"{remotes}. Please specify 'remote_name'."
+                        ),
+                    }
+                remote_name = matching_nodes[0].get("remote")
+
+            upid = await coordinator.api.shutdown_node(
+                remote=remote_name,
+                node_name=host_name,
+            )
+            return {
+                "success": True,
+                "upid": upid,
+                "host": host_name,
+                "remote": remote_name,
+            }
+        except ProxmoxDatacenterManagerError as err:
+            return {"success": False, "error": str(err)}
+
+    async def handle_shutdown_all_hosts(call: ServiceCall) -> dict[str, Any]:
+        """Handle the shutdown_all_hosts service call."""
+        coordinator = await get_coordinator()
+        if not coordinator:
+            raise ValueError("No Proxmox Datacenter Manager instance configured")
+
+        remote_name = call.data[ATTR_REMOTE_NAME]
+
+        try:
+            # Verify remote exists
+            remotes = await coordinator.api.get_remotes()
+            remote_names = [r.get("name", r.get("id", "")) for r in remotes]
+            if remote_name not in remote_names:
+                return {
+                    "success": False,
+                    "error": f"Remote '{remote_name}' not found. Available: {remote_names}",
+                }
+
+            # Get all nodes for this remote
+            await coordinator.async_refresh()
+            nodes = coordinator.data.nodes.get(remote_name, [])
+
+            if not nodes:
+                return {
+                    "success": True,
+                    "message": f"No nodes found for remote '{remote_name}'",
+                    "remote": remote_name,
+                    "hosts_shutdown": [],
+                }
+
+            results = []
+            for node in nodes:
+                node_name = node.get("node", node.get("name", "unknown"))
+                node_status = node.get("status", "unknown")
+
+                # Skip nodes that are already offline
+                if node_status != "online":
+                    _LOGGER.info(
+                        "Skipping host '%s' in remote '%s' - already %s",
+                        node_name, remote_name, node_status,
+                    )
+                    results.append({
+                        "host": node_name,
+                        "success": True,
+                        "skipped": True,
+                        "reason": f"Already {node_status}",
+                    })
+                    continue
+
+                try:
+                    upid = await coordinator.api.shutdown_node(
+                        remote=remote_name,
+                        node_name=node_name,
+                    )
+                    results.append({
+                        "host": node_name,
+                        "success": True,
+                        "skipped": False,
+                        "upid": upid,
+                    })
+                except ProxmoxDatacenterManagerError as err:
+                    results.append({
+                        "host": node_name,
+                        "success": False,
+                        "skipped": False,
+                        "error": str(err),
+                    })
+
+            return {
+                "success": True,
+                "remote": remote_name,
+                "hosts_shutdown": results,
+                "total": len(results),
+                "shutdown": sum(1 for r in results if r["success"] and not r.get("skipped")),
+                "skipped": sum(1 for r in results if r.get("skipped")),
+                "failed": sum(1 for r in results if not r["success"]),
+            }
+        except ProxmoxDatacenterManagerError as err:
+            return {"success": False, "error": str(err)}
+
     async def handle_reset_migration_state(call: ServiceCall) -> None:
         """Handle the reset_migration_state service call."""
         coordinator = await get_coordinator()
@@ -343,6 +628,42 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
             supports_response=SupportsResponse.OPTIONAL,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SHUTDOWN_HOST_VMS):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SHUTDOWN_HOST_VMS,
+            handle_shutdown_host_vms,
+            schema=SERVICE_HOST_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SHUTDOWN_REMOTE_VMS):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SHUTDOWN_REMOTE_VMS,
+            handle_shutdown_remote_vms,
+            schema=SERVICE_REMOTE_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SHUTDOWN_HOST):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SHUTDOWN_HOST,
+            handle_shutdown_host,
+            schema=SERVICE_HOST_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SHUTDOWN_ALL_HOSTS):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SHUTDOWN_ALL_HOSTS,
+            handle_shutdown_all_hosts,
+            schema=SERVICE_REMOTE_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
     if not hass.services.has_service(DOMAIN, "reset_migration_state"):
         hass.services.async_register(
             DOMAIN,
@@ -369,6 +690,11 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
 
 def _async_unregister_services(hass: HomeAssistant) -> None:
     """Unregister services."""
-    for service in [SERVICE_MIGRATE_VM, "start_vm", "stop_vm", "shutdown_vm", "reset_migration_state", "list_vms", "debug_api"]:
+    for service in [
+        SERVICE_MIGRATE_VM, "start_vm", "stop_vm", "shutdown_vm",
+        SERVICE_SHUTDOWN_HOST_VMS, SERVICE_SHUTDOWN_REMOTE_VMS,
+        SERVICE_SHUTDOWN_HOST, SERVICE_SHUTDOWN_ALL_HOSTS,
+        "reset_migration_state", "list_vms", "debug_api",
+    ]:
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
