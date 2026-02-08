@@ -455,7 +455,6 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
                 remote_name = matching_nodes[0].get("remote")
 
             upid = await coordinator.api.shutdown_node(
-                remote=remote_name,
                 node_name=host_name,
             )
             return {
@@ -518,7 +517,6 @@ async def _async_setup_services(hass: HomeAssistant) -> None:
 
                 try:
                     upid = await coordinator.api.shutdown_node(
-                        remote=remote_name,
                         node_name=node_name,
                     )
                     results.append({
