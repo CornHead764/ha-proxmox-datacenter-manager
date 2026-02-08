@@ -139,13 +139,18 @@ class ProxmoxDatacenterManagerAPI:
         _LOGGER.debug("PDM API request: %s %s params=%s data=%s", method, url, params, data)
 
         try:
-            # PDM API expects JSON for POST requests
+            # PDM API expects Content-Type: application/json for all
+            # non-GET requests, even those with no body.
+            json_body = None
+            if method != "GET":
+                json_body = data if data is not None else {}
+
             async with session.request(
                 method,
                 url,
                 headers=headers,
                 params=params,
-                json=data if method != "GET" else None,
+                json=json_body,
                 ssl=self._verify_ssl if self._verify_ssl else False,
             ) as response:
                 response_text = await response.text()
