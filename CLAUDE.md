@@ -62,12 +62,11 @@ The PDM API base URL is `https://{host}:8443/api2/json`. Key endpoint patterns:
 | `/pve/remotes/{remote}/nodes/{node}/network` | GET | Node network config (for IP lookup) |
 | `/pve/remotes/{remote}/nodes/{node}/status` | GET | Node status/metrics (GET only) |
 | `/pve/remotes/{remote}/tasks/{upid}/status` | GET | Task status tracking |
-| `/nodes/{node}/status` | POST | Shutdown/reboot the PDM host node (`command=shutdown`) |
 | `/version` | GET | PDM version info |
 
 **Important**: Resource types from the API use `pve-` prefixes (`pve-qemu`, `pve-lxc`, `pve-node`) but API endpoint paths use unprefixed types (`qemu`, `lxc`). The `_strip_pve_prefix()` helper in `api.py` handles this.
 
-**Important**: `/pve/remotes/{remote}/nodes/{node}/status` only supports GET. Node shutdown uses `/nodes/{node}/status` with POST.
+**Important**: `/pve/remotes/{remote}/nodes/{node}/status` only supports GET (metrics). `/nodes/{node}/status` POST shuts down the **PDM host itself**, not remote PVE nodes. There is currently no PDM API endpoint for shutting down remote PVE nodes.
 
 ### Authentication
 

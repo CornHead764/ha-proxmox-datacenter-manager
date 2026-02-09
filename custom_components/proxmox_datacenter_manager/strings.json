@@ -153,30 +153,6 @@
         }
       }
     },
-    "shutdown_host": {
-      "name": "Shutdown Host",
-      "description": "Shutdown a Proxmox host/node",
-      "fields": {
-        "host_name": {
-          "name": "Host Name",
-          "description": "The name of the Proxmox host/node to shutdown"
-        },
-        "remote_name": {
-          "name": "Remote Name",
-          "description": "The remote/cluster name (optional if host name is unique)"
-        }
-      }
-    },
-    "shutdown_all_hosts": {
-      "name": "Shutdown All Hosts",
-      "description": "Shutdown all hosts in a remote/cluster, skipping hosts already offline",
-      "fields": {
-        "remote_name": {
-          "name": "Remote Name",
-          "description": "The remote/cluster name whose hosts should be shutdown"
-        }
-      }
-    },
     "reset_migration_state": {
       "name": "Reset Migration State",
       "description": "Reset the migration state sensor to idle"
