@@ -868,17 +868,6 @@ class ProxmoxDatacenterManagerAPI:
         result = await self._request("POST", endpoint)
         return result.get("data", result) if isinstance(result, dict) else result
 
-    async def shutdown_node(self, node_name: str) -> str:
-        """Shutdown a Proxmox node gracefully.
-
-        Args:
-            node_name: The node name to shutdown
-        """
-        endpoint = f"/nodes/{node_name}/status"
-        data = {"command": "shutdown"}
-        result = await self._request("POST", endpoint, data=data)
-        return result.get("data", result) if isinstance(result, dict) else result
-
     async def get_vm_status(
         self, remote: str, vmid: int, vm_type: str = RESOURCE_TYPE_QEMU
     ) -> dict[str, Any]:

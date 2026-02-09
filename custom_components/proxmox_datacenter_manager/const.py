@@ -41,8 +41,6 @@ MIGRATION_STATE_FAILED = "failed"
 SERVICE_MIGRATE_VM = "migrate_vm"
 SERVICE_SHUTDOWN_HOST_VMS = "shutdown_host_vms"
 SERVICE_SHUTDOWN_REMOTE_VMS = "shutdown_remote_vms"
-SERVICE_SHUTDOWN_HOST = "shutdown_host"
-SERVICE_SHUTDOWN_ALL_HOSTS = "shutdown_all_hosts"
 
 # Attributes
 ATTR_VM_NAME = "vm_name"
